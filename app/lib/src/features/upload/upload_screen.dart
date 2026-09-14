@@ -30,27 +30,22 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
       _musicXml = null;
     });
 
-    final result = await FilePicker.platform.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const [
         'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', // audio
         'mp4', 'mov', 'mkv', 'webm', // video (audio extracted server-side)
       ],
-      withData: true,
     );
-    if (result == null || result.files.isEmpty) return;
+    if (file == null) return;
 
-    final file = result.files.first;
-    final bytes = file.bytes;
-    if (bytes == null) {
-      setState(() => _error = '无法读取文件内容');
-      return;
-    }
-    if (bytes.length > _maxBytes) {
+    final size = await file.length();
+    if (size > _maxBytes) {
       setState(() => _error =
-          '文件 ${(bytes.length / (1024 * 1024)).toStringAsFixed(1)}MB 超过 100MB 上限，请先压缩或裁剪');
+          '文件 ${(size / (1024 * 1024)).toStringAsFixed(1)}MB 超过 100MB 上限，请先压缩或裁剪');
       return;
     }
+    final bytes = await file.readAsBytes();
 
     final api = ref.read(apiClientProvider);
     setState(() {

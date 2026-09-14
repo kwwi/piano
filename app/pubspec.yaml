@@ -38,9 +38,10 @@ dependencies:
   path_provider: ^2.1.6
   path: ^1.9.1
 
-  # Export
-  pdf: ^3.13.0
-  printing: ^5.15.0
+  # Export. Pinned below pdf 3.13 / printing 5.15 which require xml ^7, while
+  # verovio_flutter needs xml ^6 — keep them on the xml ^6 line.
+  pdf: ">=3.10.0 <3.13.0"
+  printing: ">=5.12.0 <5.14.0"
 
 dev_dependencies:
   flutter_test:
