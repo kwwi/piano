@@ -28,3 +28,10 @@ backend/models/*.pt
 
 # Local walkthrough artifacts
 artifacts/
+
+# Generated sample exports
+packages/jianpu_core/out/
+
+# Vendored Verovio web runtime (large; regenerate via app/tool/setup_web_verovio.sh)
+app/web/verovio/
+app/web/verovio_worker.dart.js
