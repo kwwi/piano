@@ -53,7 +53,6 @@ String normalizeVerovioSvg(String svg) {
   // --- 1. Ensure the root <svg> has a viewBox. ---
   final root = matches.first;
   var result = svg;
-  var offset = 0; // running length delta from edits applied so far
   final rootTag = root.group(0)!;
   if (!RegExp(r'viewBox\s*=', caseSensitive: false).hasMatch(rootTag)) {
     final w = _lengthAttr(rootTag, 'width');
@@ -64,7 +63,6 @@ String normalizeVerovioSvg(String svg) {
         '<svg viewBox="0 0 $w $h"',
       );
       result = result.replaceRange(root.start, root.end, withViewBox);
-      offset += withViewBox.length - rootTag.length;
     }
   }
 
