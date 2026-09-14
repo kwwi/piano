@@ -63,7 +63,11 @@ class _ScoreViewState extends ConsumerState<ScoreView> {
             minScale: 0.5,
             maxScale: 6,
             child: Center(
-              child: SvgPicture.string(svg, fit: BoxFit.contain),
+              child: SvgPicture.string(
+                svg,
+                fit: BoxFit.contain,
+                theme: const SvgTheme(currentColor: Color(0xFF000000)),
+              ),
             ),
           ),
         );
