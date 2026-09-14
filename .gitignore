@@ -1,0 +1,27 @@
+# Local toolchains (not committed)
+.toolchain/
+
+# Flutter/Dart
+**/.dart_tool/
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/build/
+app/.idea/
+app/ios/Pods/
+app/android/.gradle/
+**/*.iml
+.packages
+pubspec.lock
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/storage/
+backend/models/*.onnx
+backend/models/*.pt
+
+# OS / editor
+.DS_Store
