@@ -1,0 +1,39 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  api:
+    build:
+      context: .
+      args:
+        INSTALL_ML: "false"
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      STORAGE_DIR: /data
+    ports:
+      - "8000:8000"
+    volumes:
+      - storage:/data
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: .
+      args:
+        INSTALL_ML: "true"   # torch + demucs + basic-pitch live on the worker
+    command: celery -A app.celery_app.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      STORAGE_DIR: /data
+    volumes:
+      - storage:/data
+    depends_on:
+      - redis
+
+volumes:
+  storage:

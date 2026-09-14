@@ -25,3 +25,6 @@ backend/models/*.pt
 
 # OS / editor
 .DS_Store
+
+# Local walkthrough artifacts
+artifacts/

@@ -1,0 +1,14 @@
+# Heavy ML dependencies (large downloads / model weights). Install on the worker
+# image on top of requirements.txt:  pip install -r requirements-ml.txt
+
+# Polyphonic transcription (default engine). ONNX backend avoids TensorFlow.
+basic-pitch>=0.4.0
+onnxruntime>=1.17
+
+# Vocal removal (HT-Demucs). Pulls torch/torchaudio.
+demucs>=4.0.1
+torch>=2.2
+torchaudio>=2.2
+
+# MT3 (high-accuracy, optional) is provisioned separately; it needs JAX + T5X
+# and large checkpoints. See app/pipeline/transcribe.py::_transcribe_mt3.
