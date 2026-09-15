@@ -1,12 +1,16 @@
 """Audio -> MIDI transcription.
 
-Default engine: Spotify **Basic Pitch** (Apache-2.0) — lightweight, instrument
-agnostic, polyphonic, outputs a MIDI with pitch bends. Optional high-accuracy
-engine: **MT3** (Magenta, Apache-2.0) via a pluggable hook.
+Default engine: **MT3** (Magenta, Apache-2.0) via a pluggable hook. Fallback /
+optional light engine: Spotify **Basic Pitch** (Apache-2.0).
 """
 from __future__ import annotations
 
 from pathlib import Path
+
+from ..config import DEFAULT_MODEL
+from ..logging_zh import get_logger
+
+log = get_logger("piano.transcribe")
 
 
 class TranscriptionError(RuntimeError):
@@ -25,14 +29,21 @@ def basic_pitch_available() -> bool:
 def transcribe_to_midi(
     audio_path: str | Path,
     out_midi: str | Path,
-    model: str = "basic_pitch",
+    model: str | None = None,
 ) -> Path:
     audio_path = Path(audio_path)
     out_midi = Path(out_midi)
     out_midi.parent.mkdir(parents=True, exist_ok=True)
+    model = (model or DEFAULT_MODEL).strip().lower()
 
     if model == "mt3":
-        return _transcribe_mt3(audio_path, out_midi)
+        try:
+            return _transcribe_mt3(audio_path, out_midi)
+        except Exception as exc:
+            if not basic_pitch_available():
+                raise
+            log.warning("MT3 不可用，回退 Basic Pitch：%s", exc)
+            return _transcribe_basic_pitch(audio_path, out_midi)
     return _transcribe_basic_pitch(audio_path, out_midi)
 
 

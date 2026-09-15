@@ -15,17 +15,24 @@ The client (Flutter) renders the returned MusicXML to staff with Verovio.
 | `app/main.py` | FastAPI endpoints (`/jobs`, `/jobs/{id}`, `/jobs/{id}/musicxml`) |
 | `app/pipeline/extract.py` | ffmpeg audio extraction / normalisation |
 | `app/pipeline/separate.py` | HT-Demucs vocal removal (two-stem `no_vocals`) |
-| `app/pipeline/transcribe.py` | Basic Pitch (default) / MT3 (optional) → MIDI |
+| `app/pipeline/transcribe.py` | MT3 (default) / Basic Pitch → MIDI |
 | `app/pipeline/to_musicxml.py` | music21 quantise + key/time inference → MusicXML |
+| `app/pipeline/to_abc.py` | MIDI → standard ABC |
+| `app/pipeline/to_pdf.py` | MusicXML → PDF (Verovio) |
 | `app/pipeline/orchestrator.py` | chains the stages with progress reporting |
 | `app/runner.py` | Celery (prod) or local thread-pool (dev) execution |
 | `app/celery_app.py`, `app/tasks.py` | Celery worker path |
 
 ## Endpoints
 
-- `POST /jobs` — multipart `file` + form `remove_vocals` (bool), `model` (`basic_pitch`\|`mt3`). Enforces the **100 MB** upload ceiling (HTTP 413 if exceeded). Returns `{job_id, status}`.
+- `POST /jobs` — multipart `file` + form `remove_vocals` (bool), `extract_melody` (bool), `model` (`mt3` default \| `basic_pitch`). Enforces the **100 MB** upload ceiling (HTTP 413 if exceeded). Returns `{job_id, status}`.
 - `GET /jobs/{id}` — `{job_id, status, progress, stage, error}`.
-- `GET /jobs/{id}/musicxml` — the resulting MusicXML file.
+- `GET /jobs/{id}/musicxml` — MusicXML from `transcription_raw.mid` (`?tracks=0,2` for a subset).
+- `GET /jobs/{id}/midi` — MIDI (`?tracks=` optional); omit for full raw.
+- `GET /jobs/{id}/midi/raw` — always full multi-track `transcription_raw.mid`.
+- `GET /jobs/{id}/tracks` — instrument list (`index`, `name`, `program`, `note_count`, …).
+- `GET /jobs/{id}/abc` — standard ABC (`?tracks=` optional).
+- `GET /jobs/{id}/pdf` — PDF engraved from that MusicXML (Verovio; needs SVG→PNG tool).
 
 ## Run locally (no broker needed)
 

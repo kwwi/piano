@@ -1,53 +1,111 @@
-import 'dart:io';
+import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../jianpu/jianpu.dart';
+import 'export_io_stub.dart'
+    if (dart.library.html) 'export_io_web.dart'
+    if (dart.library.io) 'export_io_io.dart';
 
 /// Handles saving/sharing of a score in the three supported formats.
 ///
-/// * MusicXML — produced by [MusicXmlBuilder] (also the on-device edit format).
-/// * MIDI — produced by [MidiBuilder] (pure Dart, no plugin needed).
-/// * PDF — rendered from the engraved Verovio SVG via the `pdf`/`printing`
-///   packages (`pw.SvgImage` embeds the vector SVG at full quality).
+/// * MusicXML — produced by [MusicXmlBuilder].
+/// * MIDI — produced by [MidiBuilder].
+/// * PDF — engraved Verovio SVG embedded via `pdf`/`printing`.
+///
+/// On **web**, files are downloaded through the browser (no `path_provider`).
+/// On **mobile/desktop**, they are written under the app documents directory.
 class ScoreExport {
   const ScoreExport();
 
-  Future<File> _writeBytes(String filename, List<int> bytes) async {
-    final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, filename));
-    await file.writeAsBytes(bytes, flush: true);
-    return file;
+  /// ASCII-safe basename so OS / browser download APIs do not reject the name.
+  static String safeName(String name) {
+    final cleaned = name.replaceAll(RegExp(r'[^\w\-]+'), '_');
+    return cleaned.isEmpty ? 'score' : cleaned;
   }
 
-  Future<File> saveMusicXml(JianpuScore score, {String name = 'score'}) {
+  Future<String> saveMusicXml(JianpuScore score, {String name = 'score'}) {
     final xml = const MusicXmlBuilder().build(score);
-    return _writeBytes('$name.musicxml', xml.codeUnits);
+    return saveMusicXmlText(xml, name: name);
   }
 
-  Future<File> saveMidi(JianpuScore score, {String name = 'score'}) {
+  /// Save an already-produced MusicXML string (e.g. backend job result).
+  Future<String> saveMusicXmlText(String xml, {String name = 'score'}) {
+    return saveOrDownloadBytes(
+      filename: '${safeName(name)}.musicxml',
+      bytes: utf8.encode(xml),
+    );
+  }
+
+  Future<String> saveMidi(JianpuScore score, {String name = 'score'}) {
     final bytes = const MidiBuilder().build(score);
-    return _writeBytes('$name.mid', bytes);
+    return saveMidiBytes(bytes, name: name);
+  }
+
+  /// Save raw Standard MIDI File bytes (e.g. backend transcription.mid).
+  Future<String> saveMidiBytes(List<int> bytes, {String name = 'score'}) {
+    return saveOrDownloadBytes(
+      filename: '${safeName(name)}.mid',
+      bytes: bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+    );
+  }
+
+  /// Save standard ABC notation text.
+  Future<String> saveAbcText(String abc, {String name = 'score'}) {
+    return saveOrDownloadBytes(
+      filename: '${safeName(name)}.abc',
+      bytes: utf8.encode(abc),
+    );
   }
 
   /// Build a single-page PDF from an already-engraved [svg] string.
   Future<Uint8List> pdfFromSvg(String svg) async {
+    final prepared = prepareSvgForPdf(svg);
     final doc = pw.Document();
     doc.addPage(
       pw.Page(
-        build: (context) => pw.Center(child: pw.SvgImage(svg: svg)),
+        build: (context) => pw.Center(
+          child: pw.SvgImage(svg: prepared, fit: pw.BoxFit.contain),
+        ),
       ),
     );
     return doc.save();
   }
 
-  /// Present the OS share/print sheet for a PDF built from [svg].
+  /// Present the OS share/print/download sheet for a PDF built from [svg].
   Future<void> sharePdf(String svg, {String name = 'score'}) async {
     final bytes = await pdfFromSvg(svg);
-    await Printing.sharePdf(bytes: bytes, filename: '$name.pdf');
+    await Printing.sharePdf(
+      bytes: bytes,
+      filename: '${safeName(name)}.pdf',
+    );
   }
+}
+
+/// Strip SVG content that the `pdf` package cannot embed.
+///
+/// Verovio draws notes/staves as `<path>`/`<use>`, which survive. Title text,
+/// tempo glyphs and footer labels often contain Unicode (CJK / SMuFL / ▯
+/// placeholders) that trigger
+/// `Invalid argument (string): Contains invalid characters`.
+String prepareSvgForPdf(String svg) {
+  var out = svg;
+  out = out.replaceAll(
+    RegExp(r'<text\b[^>]*>[\s\S]*?</text>', caseSensitive: false),
+    '',
+  );
+  out = out.replaceAll(
+    RegExp(r'<title\b[^>]*>[\s\S]*?</title>', caseSensitive: false),
+    '',
+  );
+  out = out.replaceAll(
+    RegExp(r'<desc\b[^>]*>[\s\S]*?</desc>', caseSensitive: false),
+    '',
+  );
+  out = out.replaceAll(RegExp(r'[\u0000-\u0008\u000B\u000C\u000E-\u001F]'), '');
+  out = out.replaceAll('▯', '');
+  out = out.replaceAll('\uFFFD', '');
+  return out;
 }

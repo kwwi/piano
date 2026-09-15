@@ -56,6 +56,13 @@ def test_job_lifecycle(sine_wav):
         xml = client.get(f"/jobs/{job_id}/musicxml")
         assert xml.status_code == 200
         assert "<score-partwise" in xml.text
+        midi = client.get(f"/jobs/{job_id}/midi")
+        assert midi.status_code == 200
+        assert midi.content.startswith(b"MThd")
+        abc = client.get(f"/jobs/{job_id}/abc")
+        assert abc.status_code == 200
+        assert abc.text.lstrip().startswith("X:")
+        assert "K:" in abc.text
     else:
         # Without ML deps the transcription stage fails, but extraction must
         # have run first (proves the API + runner + pipeline wiring works).

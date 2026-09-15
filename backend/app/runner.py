@@ -9,10 +9,13 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import CELERY_BROKER_URL, STORAGE_DIR
+from .config import CELERY_BROKER_URL, DEFAULT_MODEL, STORAGE_DIR
+from .logging_zh import get_logger, stage_zh
 from .pipeline.orchestrator import run_pipeline
 from .schemas import JobState
 from .store import store
+
+log = get_logger("piano.job")
 
 # librosa/numba (pulled in by Basic Pitch) fails in worker threads when it
 # cannot write a function cache next to the installed package. Point the cache
@@ -24,17 +27,33 @@ os.environ.setdefault("NUMBA_CACHE_DIR", str(_numba_cache))
 _executor = ThreadPoolExecutor(max_workers=2)
 
 
-def _run(job_id: str, input_path: str, remove_vocals: bool, model: str) -> None:
+def _run(
+    job_id: str,
+    input_path: str,
+    *,
+    remove_vocals: bool,
+    extract_melody: bool,
+    model: str,
+) -> None:
+    short = job_id[:8]
+    log.info("【任务 %s】开始处理：模型=%s 提取主旋律=%s", short, model, extract_melody)
     store.update(job_id, status=JobState.processing, stage="extract", progress=0.01)
     job_dir = store.job_dir(job_id)
     try:
         def progress(stage: str, value: float) -> None:
             store.update(job_id, stage=stage, progress=value)
+            log.info(
+                "【任务 %s】%s（进度 %.0f%%）",
+                short,
+                stage_zh(stage),
+                value * 100,
+            )
 
         xml = run_pipeline(
             input_path,
             job_dir,
             remove_vocals_first=remove_vocals,
+            extract_vocals_melody=extract_melody,
             model=model,
             # In dev/demo without the Demucs weights, don't hard-fail: fall back
             # to analysing the full mix so the pipeline still yields a score.
@@ -48,15 +67,39 @@ def _run(job_id: str, input_path: str, remove_vocals: bool, model: str) -> None:
             progress=1.0,
             result_path=Path(xml),
         )
+        log.info("【任务 %s】成功完成 → %s", short, xml)
     except Exception as exc:  # noqa: BLE001 - surface any stage failure to client
         store.update(job_id, status=JobState.error, error=str(exc))
+        log.exception("【任务 %s】失败：%s", short, exc)
 
 
-def submit(job_id: str, input_path: str, remove_vocals: bool, model: str) -> None:
+def submit(
+    job_id: str,
+    input_path: str,
+    *,
+    remove_vocals: bool = False,
+    extract_melody: bool = True,
+    model: str | None = None,
+) -> None:
     """Enqueue a job for execution."""
+    model = model or DEFAULT_MODEL
+    log.info("【任务 %s】已入队", job_id[:8])
     if CELERY_BROKER_URL:
         from .tasks import process_job  # local import to avoid celery at import time
 
-        process_job.delay(job_id, input_path, remove_vocals, model)
+        process_job.delay(
+            job_id,
+            input_path,
+            remove_vocals,
+            extract_melody,
+            model,
+        )
     else:
-        _executor.submit(_run, job_id, input_path, remove_vocals, model)
+        _executor.submit(
+            _run,
+            job_id,
+            input_path,
+            remove_vocals=remove_vocals,
+            extract_melody=extract_melody,
+            model=model,
+        )

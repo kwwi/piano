@@ -24,3 +24,19 @@ class JobStatus(BaseModel):
     progress: float = 0.0  # 0..1
     stage: str | None = None
     error: str | None = None
+
+
+class MidiTrackInfo(BaseModel):
+    index: int
+    name: str
+    program: int
+    program_name: str
+    is_drum: bool = False
+    note_count: int = 0
+    duration_sec: float = 0.0
+
+
+class JobTracks(BaseModel):
+    job_id: str
+    source: str = "transcription_raw.mid"
+    tracks: list[MidiTrackInfo]

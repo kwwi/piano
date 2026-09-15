@@ -23,6 +23,15 @@ backend/storage/
 backend/models/*.onnx
 backend/models/*.pt
 
+# Secrets / local env
+.env
+backend/.env
+
+# Vision OMR local outputs
+*.vision.html
+*.vision.abc
+*.vision.dsl.txt
+
 # OS / editor
 .DS_Store
 

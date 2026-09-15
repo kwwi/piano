@@ -111,7 +111,16 @@ String normalizeVerovioSvg(String svg) {
   // Mirror the rule by adding an explicit `stroke="currentColor"` to every
   // stroke-bearing shape that lacks an inline stroke; `SvgTheme.currentColor`
   // (set by the widget) then resolves it to a concrete color.
-  return _inlineStroke(buffer.toString());
+  var withStroke = _inlineStroke(buffer.toString());
+
+  // --- 4. Drop the unused `<style>` block. ---
+  // After inlining strokes, the CSS is redundant. Leaving it makes flutter_svg
+  // log: "unhandled element <style/>".
+  withStroke = withStroke.replaceAll(
+    RegExp(r'<style\b[^>]*>[\s\S]*?</style>', caseSensitive: false),
+    '',
+  );
+  return withStroke;
 }
 
 final _shapeTag =

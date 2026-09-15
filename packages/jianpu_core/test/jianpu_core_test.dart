@@ -32,6 +32,23 @@ title: Twinkle
       expect(score.measures.first.notes.first.quarterLength, 2.0);
     });
 
+    test('orphan leading "-" is ignored (OCR noise)', () {
+      final score = parser.parse('- 1 2 3 |');
+      expect(score.measures.first.notes.map((n) => n.degree).toList(), [1, 2, 3]);
+    });
+
+    test('"-" after barline extends previous measure last note', () {
+      final score = parser.parse('1 2 |\n- 3 |');
+      expect(score.measures.length, 2);
+      expect(score.measures.first.notes.last.quarterLength, 2.0);
+      expect(score.measures[1].notes.first.degree, 3);
+    });
+
+    test('comment lines starting with # are skipped', () {
+      final score = parser.parse('# draft\n1 2 3 |');
+      expect(score.measures.first.notes.length, 3);
+    });
+
     test('underlines halve duration; dot adds half', () {
       final score = parser.parse('1_ 1__ 1.');
       final notes = score.measures.first.notes;
@@ -50,8 +67,16 @@ title: Twinkle
       expect(notes[4].isRest, true);
     });
 
-    test('throws on invalid token', () {
-      expect(() => parser.parse('1 9'), throwsA(isA<JianpuParseException>()));
+    test('skips invalid OCR tokens but keeps valid notes', () {
+      final score = parser.parse('1 xyz 2 |');
+      expect(score.measures.first.notes.map((n) => n.degree).toList(), [1, 2]);
+    });
+
+    test('throws when body has no valid notes', () {
+      expect(
+        () => parser.parse('9 8 xyz'),
+        throwsA(isA<JianpuParseException>()),
+      );
     });
   });
 
@@ -149,6 +174,95 @@ title: Twinkle
         again.measures.first.notes.map((n) => n.degree).toList(),
         original.measures.first.notes.map((n) => n.degree).toList(),
       );
+    });
+  });
+  group('JianpuRhythmFitter', () {
+    test('packs long missing-barline runs into 4/4 measures', () {
+      // 12 quarters → 3 bars (8 would scale to eighths instead).
+      final score = JianpuScore(
+        measures: [
+          JianpuMeasure([
+            for (var i = 0; i < 12; i++)
+              JianpuNote(degree: (i % 7) + 1, quarterLength: 1),
+          ]),
+        ],
+      );
+      final fitted = const JianpuRhythmFitter().fit(score);
+      expect(fitted.measures.length, 3);
+      expect(
+        fitted.measures.every(
+          (m) =>
+              (m.notes.fold<double>(0, (a, n) => a + n.quarterLength) - 4).abs() <
+              0.1,
+        ),
+        isTrue,
+      );
+    });
+
+    test('scales eight quarters in one bar down to eighths', () {
+      final eight = JianpuScore(
+        measures: [
+          JianpuMeasure([
+            for (var i = 0; i < 8; i++)
+              JianpuNote(degree: 1, quarterLength: 1),
+          ]),
+        ],
+      );
+      final fitted = const JianpuRhythmFitter().fit(eight);
+      expect(fitted.measures.length, 1);
+      expect(
+        fitted.measures.first.notes.every(
+          (n) => (n.quarterLength - 0.5).abs() < 1e-6,
+        ),
+        isTrue,
+      );
+    });
+
+    test('scales six quarters in one bar to fill 4/4', () {
+      final six = JianpuScore(
+        measures: [
+          JianpuMeasure([
+            for (var i = 0; i < 6; i++)
+              JianpuNote(degree: 1, quarterLength: 1),
+          ]),
+        ],
+      );
+      final fitted = const JianpuRhythmFitter().fit(six);
+      final sum = fitted.measures.first.notes
+          .fold<double>(0, (a, n) => a + n.quarterLength);
+      expect((sum - 4.0).abs() < 0.15, isTrue);
+    });
+
+    test('extends last note when a beat is missing', () {
+      final score = parser.parse('6 6 5 |');
+      final fitted = const JianpuRhythmFitter().fit(score);
+      expect(fitted.measures.first.notes.last.quarterLength, 2.0);
+    });
+  });
+
+  group('WavBuilder', () {
+    test('midiToHz A4 is 440', () {
+      expect(midiToHz(69), closeTo(440, 0.01));
+    });
+
+    test('builds a valid RIFF/WAVE header for Twinkle', () {
+      final score = parser.parse(JianpuSamples.twinkle);
+      final wav = const WavBuilder().build(score);
+      expect(String.fromCharCodes(wav.sublist(0, 4)), 'RIFF');
+      expect(String.fromCharCodes(wav.sublist(8, 12)), 'WAVE');
+      // At least one second of audio at 44.1kHz mono 16-bit.
+      expect(wav.length, greaterThan(44100 * 2));
+    });
+
+    test('round-trips MidiBuilder bytes through parseMidiSmf + WavBuilder', () {
+      final score = parser.parse(JianpuSamples.twinkle);
+      final mid = const MidiBuilder().build(score);
+      final parsed = parseMidiSmf(mid);
+      expect(parsed.notes, isNotEmpty);
+      expect(parsed.notes.first.midi, 60); // C4 for degree 1 in C
+      final wav = const WavBuilder().buildFromMidi(mid);
+      expect(String.fromCharCodes(wav.sublist(0, 4)), 'RIFF');
+      expect(wav.length, greaterThan(1000));
     });
   });
 }

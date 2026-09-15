@@ -28,7 +28,7 @@ Android-first app that converts three kinds of input into **staff notation
 | [`packages/jianpu_core`](packages/jianpu_core) | Pure-Dart engine: DSL parser, editable IR, pitch resolution, MusicXML + MIDI builders, monophonic transcriber. **23 unit tests** (`dart test`). |
 | [`app`](app) | Flutter app: home + three feature screens, Verovio rendering, export, backend client. |
 | [`backend`](backend) | FastAPI + Celery pipeline: ffmpeg → Demucs → Basic Pitch/MT3 → music21. Docker/compose. |
-| [`docs/LICENSES.md`](docs/LICENSES.md) | Open-source component & license compliance (avoids GPL/AGPL contamination). |
+| [`docs/LICENSES.md`](docs/LICENSES.md) | Component / license notes (mature stacks preferred; GPL allowed when useful). |
 
 ## Data-format convergence
 
@@ -54,8 +54,7 @@ cd app && flutter pub get && flutter run
 
 ## Tech stack & licensing
 
-Flutter (BSD), Verovio/`verovio_flutter` (LGPL, dynamic-linked), `pitch_detector_dart`
-(MIT), FastAPI/Celery (MIT/BSD), ffmpeg (LGPL build), HT-Demucs (MIT), Basic Pitch
-(Apache-2.0), MT3 (Apache-2.0, optional), music21 (BSD). GPL/AGPL components
-(TarsosDSP, aubio, jianpu-ly, YOLOv8) are intentionally avoided — see
-[`docs/LICENSES.md`](docs/LICENSES.md).
+See [`docs/LICENSES.md`](docs/LICENSES.md) for the current component list.
+Mature stacks (OpenCV OMR, Demucs vocals, librosa/aubio beat quantize,
+jianpu-ly) are preferred for quality; GPL components may be used when they
+are the better tool.

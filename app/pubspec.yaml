@@ -59,5 +59,10 @@ flutter:
           weight: 500
         - asset: assets/fonts/Roboto-Bold.ttf
           weight: 700
+    # CJK fallback for Chinese UI / Verovio titles when Google Noto CDN is blocked.
+    # Install via: bash tool/setup_fonts.sh
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Regular.otf
   assets:
     - assets/fonts/

@@ -129,9 +129,31 @@ class JianpuParser {
       }
     }
 
+    void extendLastNote() {
+      if (current.isNotEmpty) {
+        final last = current.removeLast();
+        current.add(last.copyWith(quarterLength: last.quarterLength + 1.0));
+        return;
+      }
+      // "-" at the start of a line after a barline: attach to the previous
+      // measure's last note (common in multi-line DSL / OCR output).
+      if (measures.isNotEmpty && measures.last.notes.isNotEmpty) {
+        final prev = measures.removeLast();
+        final notes = List<JianpuNote>.of(prev.notes);
+        final last = notes.removeLast();
+        notes.add(last.copyWith(quarterLength: last.quarterLength + 1.0));
+        measures.add(JianpuMeasure(notes));
+        return;
+      }
+      // Orphan extender (OCR noise) — ignore rather than hard-fail the score.
+    }
+
     for (final entry in bodyLines) {
-      // Split on '|' while keeping the delimiter meaningful.
-      final tokens = entry.text
+      final text = entry.text.trim();
+      // Allow comment lines from OMR drafts / user annotations.
+      if (text.startsWith('#')) continue;
+
+      final tokens = text
           .replaceAll('|', ' | ')
           .split(RegExp(r'\s+'))
           .where((t) => t.isNotEmpty);
@@ -142,16 +164,16 @@ class JianpuParser {
           continue;
         }
         if (token == '-') {
-          if (current.isEmpty) {
-            throw JianpuParseException(
-                'Beat extension "-" has no preceding note',
-                line: entry.number);
-          }
-          final last = current.removeLast();
-          current.add(last.copyWith(quarterLength: last.quarterLength + 1.0));
+          extendLastNote();
           continue;
         }
-        current.add(_parseNoteToken(token, entry.number));
+        try {
+          current.add(_parseNoteToken(token, entry.number));
+        } on JianpuParseException {
+          // Skip unrecognised OCR debris tokens instead of aborting the whole
+          // score (e.g. stray punctuation that survived sanitisation).
+          continue;
+        }
       }
     }
     closeMeasure();

@@ -4,13 +4,21 @@ from __future__ import annotations
 from pathlib import Path
 
 from .celery_app import celery_app
+from .config import DEFAULT_MODEL
 from .pipeline.orchestrator import run_pipeline
 from .schemas import JobState
 from .store import store
 
 
 @celery_app.task(name="process_job")
-def process_job(job_id: str, input_path: str, remove_vocals: bool, model: str) -> str:
+def process_job(
+    job_id: str,
+    input_path: str,
+    remove_vocals: bool = False,
+    extract_melody: bool = True,
+    model: str | None = None,
+) -> str:
+    model = model or DEFAULT_MODEL
     store.update(job_id, status=JobState.processing, stage="extract", progress=0.01)
     job_dir = store.job_dir(job_id)
     try:
@@ -21,6 +29,7 @@ def process_job(job_id: str, input_path: str, remove_vocals: bool, model: str) -
             input_path,
             job_dir,
             remove_vocals_first=remove_vocals,
+            extract_vocals_melody=extract_melody,
             model=model,
             on_progress=progress,
         )

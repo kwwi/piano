@@ -12,10 +12,20 @@ numpy>=1.26
 httpx>=0.27
 pytest>=8.0
 Pillow>=10.0
+pytesseract>=0.3.10
+opencv-python-headless>=4.8
+scikit-learn>=1.3
+joblib>=1.3
+librosa>=0.10
+jianpu-ly>=1.8
+
+# Optional GPL beat tracker (used automatically when importable):
+#   pip install aubio
 
 # Optional: server-side Verovio rendering (also used to validate generated MusicXML)
 verovio>=4.3
 
-# Optional: better Jianpu image OCR (POST /omr). Without it, /omr still deskews
-# and returns an editable draft for the client preview.
-# pytesseract>=0.3.10
+# System packages:
+#   tesseract (+ chi_sim) for /omr
+#   ffmpeg for audio/video extract
+#   lilypond (optional) if compiling jianpu-ly .ly output

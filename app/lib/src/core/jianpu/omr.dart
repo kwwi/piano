@@ -87,7 +87,20 @@ class JianpuOmr {
       );
     }
 
-    final confidence = total == 0 ? 0.0 : classified / total;
+    // On-device glyph classification cannot read commercial sheets (chords +
+    // lyrics + octave dots). Emitting its digit soup misleads users — refuse
+    // and ask them to use the backend or fill in by hand.
+    if (_looksLikeGarbage(lines)) {
+      return OmrResult(
+        dsl: _emptyDraft('(端上识别不可靠 — 请手补或连接后端)'),
+        deskewedBytes: deskewedBytes,
+        confidence: 0,
+        message:
+            '端上轻量识别不足以处理该谱面。请确认后端已启动（含 CORS）后再试，或对照图片手填简谱。',
+      );
+    }
+
+    final confidence = (total == 0 ? 0.0 : classified / total).clamp(0.0, 0.35);
     final dsl = StringBuffer()
       ..writeln('key: 1=C')
       ..writeln('time: 4/4')
@@ -101,11 +114,30 @@ class JianpuOmr {
     return OmrResult(
       dsl: dsl.toString(),
       deskewedBytes: deskewedBytes,
-      confidence: confidence.clamp(0.0, 1.0),
-      message: confidence < 0.4
-          ? '识别置信度偏低，请仔细校对后再转五线谱'
-          : '已完成纠偏与识别，请校对后应用',
+      confidence: confidence,
+      message: confidence < 0.25
+          ? '端上轻量识别完成，复杂印刷谱（和弦/歌词）误差大，建议启动后端或手补'
+          : '端上识别完成，请仔细校对（含和弦框的印刷谱请优先用后端 OCR）',
     );
+  }
+
+  /// Heuristic: commercial-sheet local OCR tends to dump many degrees with few
+  /// well-formed bars, or several extremely long digit runs.
+  bool _looksLikeGarbage(List<String> lines) {
+    var degrees = 0;
+    var bars = 0;
+    var longLines = 0;
+    for (final line in lines) {
+      final d = RegExp(r'[0-7]').allMatches(line).length;
+      final b = '|'.allMatches(line).length;
+      degrees += d;
+      bars += b;
+      if (d >= 24 && b <= 1) longLines++;
+    }
+    if (lines.length >= 2 && bars < lines.length) return true;
+    if (degrees >= 40 && bars <= 3) return true;
+    if (longLines >= 1) return true;
+    return false;
   }
 
   String _emptyDraft(String titleHint) => '''key: 1=C
@@ -113,7 +145,8 @@ time: 4/4
 tempo: 100
 title: $titleHint
 ---
-1 1 5 5 | 6 6 5 - | 4 4 3 3 | 2 2 1 -
+# 请对照图片填写旋律，例如：
+# 3 5 5 5 | 2 2 1 | 2 3 3 - |
 ''';
 
   /// Search skew angle in ±15° by maximizing horizontal projection variance.

@@ -24,11 +24,23 @@ def test_extract_audio_from_wav(sine_wav, tmp_path):
     reason="requires ffmpeg + basic-pitch",
 )
 def test_full_pipeline_produces_musicxml(sine_wav, tmp_path):
+    work = tmp_path / "work"
     xml = run_pipeline(
         sine_wav,
-        tmp_path / "work",
+        work,
         remove_vocals_first=False,  # skip demucs weights in tests
+        extract_vocals_melody=False,
         model="basic_pitch",
     )
     text = xml.read_text(encoding="utf-8")
     assert "<score-partwise" in text
+    raw = work / "transcription_raw.mid"
+    mid = work / "transcription.mid"
+    assert raw.is_file()
+    assert mid.is_file()
+    assert raw.read_bytes() == mid.read_bytes()
+    abc = work / "score.abc"
+    assert abc.is_file()
+    abc_text = abc.read_text(encoding="utf-8")
+    assert abc_text.lstrip().startswith("X:")
+    assert "K:" in abc_text

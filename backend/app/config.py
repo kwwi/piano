@@ -16,8 +16,8 @@ MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL")
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", CELERY_BROKER_URL or "")
 
-# Default transcription model: "basic_pitch" (light) or "mt3" (high accuracy).
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "basic_pitch")
+# Default transcription model: "mt3" (high accuracy) or "basic_pitch" (light).
+DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "mt3")
 
 # Demucs model tier for vocal removal.
 DEMUCS_MODEL = os.getenv("DEMUCS_MODEL", "htdemucs")

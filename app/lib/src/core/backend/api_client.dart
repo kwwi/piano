@@ -33,6 +33,66 @@ class JobStatus {
       );
 }
 
+/// One instrument / program track inside ``transcription_raw.mid``.
+class MidiTrackInfo {
+  final int index;
+  final String name;
+  final int program;
+  final String programName;
+  final bool isDrum;
+  final int noteCount;
+  final double durationSec;
+
+  const MidiTrackInfo({
+    required this.index,
+    required this.name,
+    required this.program,
+    required this.programName,
+    this.isDrum = false,
+    this.noteCount = 0,
+    this.durationSec = 0,
+  });
+
+  factory MidiTrackInfo.fromJson(Map<String, dynamic> json) => MidiTrackInfo(
+        index: json['index'] as int,
+        name: json['name'] as String? ?? 'Track',
+        program: json['program'] as int? ?? 0,
+        programName: json['program_name'] as String? ?? '',
+        isDrum: json['is_drum'] as bool? ?? false,
+        noteCount: json['note_count'] as int? ?? 0,
+        durationSec: (json['duration_sec'] as num?)?.toDouble() ?? 0,
+      );
+
+  String get label {
+    final notes = noteCount > 0 ? ' · $noteCount 音' : '';
+    if (isDrum) return '$name$notes';
+    if (programName.isNotEmpty && programName != name) {
+      return '$name（$programName）$notes';
+    }
+    return '$name$notes';
+  }
+}
+
+class JobTracks {
+  final String jobId;
+  final String source;
+  final List<MidiTrackInfo> tracks;
+
+  const JobTracks({
+    required this.jobId,
+    required this.source,
+    required this.tracks,
+  });
+
+  factory JobTracks.fromJson(Map<String, dynamic> json) => JobTracks(
+        jobId: json['job_id'] as String,
+        source: json['source'] as String? ?? 'transcription_raw.mid',
+        tracks: (json['tracks'] as List<dynamic>? ?? [])
+            .map((e) => MidiTrackInfo.fromJson(e as Map<String, dynamic>))
+            .toList(),
+      );
+}
+
 /// Result of ``POST /omr`` (Jianpu image recognition).
 class OmrApiResult {
   final String dsl;
@@ -79,14 +139,16 @@ class ApiClient {
   Future<String> createJob({
     required List<int> bytes,
     required String filename,
-    bool removeVocals = true,
-    String model = 'basic_pitch',
+    bool removeVocals = false,
+    bool extractMelody = true,
+    String model = 'mt3',
   }) async {
     if (bytes.length > maxUploadBytes) {
       throw ApiException('文件超过 100MB 上限 (${bytes.length ~/ (1024 * 1024)}MB)');
     }
     final req = http.MultipartRequest('POST', _u('/jobs'))
       ..fields['remove_vocals'] = removeVocals.toString()
+      ..fields['extract_melody'] = extractMelody.toString()
       ..fields['model'] = model
       ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
     final streamed = await _http.send(req);
@@ -124,10 +186,51 @@ class ApiClient {
     return JobStatus.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future<String> getMusicXml(String id) async {
-    final resp = await _http.get(_u('/jobs/$id/musicxml'));
+  Uri _jobArtifact(String id, String artifact, {List<int>? tracks}) {
+    final base = Uri.parse('$baseUrl/jobs/$id/$artifact');
+    if (tracks == null || tracks.isEmpty) return base;
+    return base.replace(queryParameters: {'tracks': tracks.join(',')});
+  }
+
+  Future<JobTracks> getTracks(String id) async {
+    final resp = await _http.get(_u('/jobs/$id/tracks'));
+    if (resp.statusCode != 200) {
+      throw ApiException('获取音轨列表失败 (${resp.statusCode})');
+    }
+    return JobTracks.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
+  }
+
+  Future<String> getMusicXml(String id, {List<int>? tracks}) async {
+    final resp = await _http.get(_jobArtifact(id, 'musicxml', tracks: tracks));
     if (resp.statusCode != 200) {
       throw ApiException('获取结果失败 (${resp.statusCode})');
+    }
+    return utf8.decode(resp.bodyBytes);
+  }
+
+  /// Download MIDI for [tracks] (null/empty = full transcription_raw.mid).
+  Future<List<int>> getMidi(String id, {List<int>? tracks}) async {
+    final resp = await _http.get(_jobArtifact(id, 'midi', tracks: tracks));
+    if (resp.statusCode != 200) {
+      throw ApiException('获取 MIDI 失败 (${resp.statusCode})');
+    }
+    return resp.bodyBytes;
+  }
+
+  /// Always the full multi-track ``transcription_raw.mid``.
+  Future<List<int>> getMidiRaw(String id) async {
+    final resp = await _http.get(_u('/jobs/$id/midi/raw'));
+    if (resp.statusCode != 200) {
+      throw ApiException('获取原始 MIDI 失败 (${resp.statusCode})');
+    }
+    return resp.bodyBytes;
+  }
+
+  /// Download ABC for [tracks] (null/empty = full score).
+  Future<String> getAbc(String id, {List<int>? tracks}) async {
+    final resp = await _http.get(_jobArtifact(id, 'abc', tracks: tracks));
+    if (resp.statusCode != 200) {
+      throw ApiException('获取 ABC 失败 (${resp.statusCode})');
     }
     return utf8.decode(resp.bodyBytes);
   }
