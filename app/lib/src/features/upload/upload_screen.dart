@@ -10,6 +10,7 @@ import '../../core/backend/api_client.dart';
 import '../../core/notation/score_export.dart';
 import '../../core/notation/score_result_controller.dart';
 import '../../core/notation/verovio_renderer.dart';
+import '../../widgets/midi_track_picker.dart';
 import '../../widgets/score_result_actions.dart';
 import '../../widgets/score_view.dart';
 
@@ -123,10 +124,11 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
         setState(() => _error = '处理失败: ${status.error}');
       } else {
         List<MidiTrackInfo> tracks = const [];
+        String? trackErr;
         try {
           tracks = (await api.getTracks(jobId)).tracks;
-        } catch (_) {
-          tracks = const [];
+        } catch (e) {
+          trackErr = '音轨列表加载失败: $e';
         }
         setState(() {
           _jobId = jobId;
@@ -134,6 +136,9 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
           _selected
             ..clear()
             ..addAll(tracks.map((t) => t.index));
+          if (trackErr != null) {
+            _error = trackErr;
+          }
         });
         await _loadSelection(immediate: true);
       }
@@ -363,64 +368,19 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
-          if (_tracks.isNotEmpty) _buildTrackPicker(context),
+          if (_tracks.isNotEmpty)
+            MidiTrackPicker(
+              tracks: _tracks,
+              selected: _selected,
+              enabled: !_busy && !_trackLoading,
+              onToggle: _toggleTrack,
+              onSelectAll: _selectAllTracks,
+            ),
           if (_trackLoading) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: _musicXml == null
                 ? const Center(child: Text('上传后在此显示五线谱结果'))
                 : ScoreView(musicXml: _musicXml!),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTrackPicker(BuildContext context) {
-    final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 4, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '音轨（勾选后试听 / 导出）',
-                    style: theme.textTheme.titleSmall,
-                  ),
-                ),
-                TextButton(
-                  onPressed: _busy ? null : () => _selectAllTracks(true),
-                  child: const Text('全选'),
-                ),
-                TextButton(
-                  onPressed: _busy ? null : () => _selectAllTracks(false),
-                  child: const Text('清空'),
-                ),
-              ],
-            ),
-          ),
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 160),
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: _tracks.length,
-              itemBuilder: (context, i) {
-                final t = _tracks[i];
-                return CheckboxListTile(
-                  dense: true,
-                  value: _selected.contains(t.index),
-                  onChanged: _busy
-                      ? null
-                      : (v) => _toggleTrack(t.index, v),
-                  title: Text(t.label),
-                  secondary: Text('#${t.index}', style: theme.textTheme.labelMedium),
-                );
-              },
-            ),
           ),
         ],
       ),

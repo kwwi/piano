@@ -10,8 +10,68 @@ class TrackError(RuntimeError):
     pass
 
 
+# GM family → short label (aligned with common MusicXML / Verovio abbreviations).
+_GM_ABBREV: list[tuple[range, str]] = [
+    (range(0, 8), "Pno"),
+    (range(8, 16), "Chrom"),
+    (range(16, 24), "Org"),
+    (range(24, 32), "Guit"),
+    (range(32, 40), "Bass"),
+    (range(40, 48), "Str"),
+    (range(48, 56), "Ens"),
+    (range(56, 64), "Bras"),
+    (range(64, 72), "Reed"),
+    (range(72, 80), "Pipe"),
+    (range(80, 88), "Lead"),
+    (range(88, 96), "Pad"),
+    (range(96, 104), "Fx"),
+    (range(104, 112), "Eth"),
+    (range(112, 120), "Perc"),
+    (range(120, 128), "SFX"),
+]
+
+
+def _abbrev_for(program: int, *, is_drum: bool) -> str:
+    if is_drum:
+        return "Drum"
+    for rng, label in _GM_ABBREV:
+        if program in rng:
+            return label
+    return f"P{program}"
+
+
+def _midi_track_meta_names(midi_path: Path) -> list[str]:
+    """Best-effort MIDI track_name meta events (mido), excluding the tempo track."""
+    try:
+        import mido
+    except Exception:
+        return []
+    try:
+        mid = mido.MidiFile(str(midi_path))
+    except Exception:
+        return []
+    names: list[str] = []
+    for i, tr in enumerate(mid.tracks):
+        if i == 0 and len(mid.tracks) > 1:
+            # Type-1 tempo/conductor track — skip unless it is the only track.
+            continue
+        found = ""
+        for msg in tr:
+            if msg.type == "track_name":
+                found = (msg.name or "").strip()
+                if found:
+                    break
+        names.append(found)
+    return names
+
+
 def list_midi_tracks(midi_path: str | Path) -> list[dict]:
-    """Return metadata for each pretty_midi instrument in ``midi_path``."""
+    """Return metadata for each pretty_midi instrument in ``midi_path``.
+
+    Display names prefer MIDI track_name / instrument name; otherwise use a short
+    family label with an index (``Pno0``, ``Pno1``, …) so the UI matches typical
+    engraved staff abbreviations.
+    """
     try:
         import pretty_midi
     except Exception as exc:  # pragma: no cover
@@ -22,32 +82,74 @@ def list_midi_tracks(midi_path: str | Path) -> list[dict]:
         raise TrackError(f"MIDI not found: {midi_path}")
 
     pm = pretty_midi.PrettyMIDI(str(midi_path))
-    tracks: list[dict] = []
+    meta_names = _midi_track_meta_names(midi_path)
+
+    # First pass: collect base fields + preferred raw name.
+    pending: list[dict] = []
     for i, inst in enumerate(pm.instruments):
         program = int(inst.program)
         if inst.is_drum:
             program_name = "Drums"
-            display = inst.name.strip() or "Drums"
         else:
             try:
                 program_name = pretty_midi.program_to_instrument_name(program)
             except Exception:
                 program_name = f"Program {program}"
-            display = inst.name.strip() or program_name
+        abbrev = _abbrev_for(program, is_drum=bool(inst.is_drum))
+        raw = (inst.name or "").strip()
+        if not raw and i < len(meta_names) and meta_names[i]:
+            raw = meta_names[i]
         starts = [n.start for n in inst.notes]
         ends = [n.end for n in inst.notes]
-        tracks.append(
+        pending.append(
             {
                 "index": i,
-                "name": display,
+                "raw_name": raw,
                 "program": program,
                 "program_name": program_name,
+                "abbreviation": abbrev,
                 "is_drum": bool(inst.is_drum),
                 "note_count": len(inst.notes),
                 "duration_sec": round(max(ends) - min(starts), 3) if starts else 0.0,
             }
         )
+
+    # Assign unique display names: keep explicit MIDI names; else Abbrev+index.
+    abbrev_counts: dict[str, int] = {}
+    tracks: list[dict] = []
+    for item in pending:
+        raw = item.pop("raw_name")
+        abbrev = item["abbreviation"]
+        seq = abbrev_counts.get(abbrev, 0)
+        abbrev_counts[abbrev] = seq + 1
+        if raw:
+            display = raw
+        else:
+            display = f"{abbrev}{seq}"
+        item["name"] = display
+        tracks.append(item)
     return tracks
+
+
+def annotate_instrument_names(midi_path: str | Path) -> Path:
+    """Write computed display names back onto empty instrument.name fields."""
+    try:
+        import pretty_midi
+    except Exception as exc:  # pragma: no cover
+        raise TrackError("pretty_midi is required") from exc
+
+    midi_path = Path(midi_path)
+    tracks = list_midi_tracks(midi_path)
+    pm = pretty_midi.PrettyMIDI(str(midi_path))
+    changed = False
+    for t, inst in zip(tracks, pm.instruments):
+        name = str(t["name"])
+        if (inst.name or "").strip() != name:
+            inst.name = name
+            changed = True
+    if changed:
+        pm.write(str(midi_path))
+    return midi_path
 
 
 def write_tracks_manifest(
@@ -133,6 +235,8 @@ def write_track_subset(
             f"track index out of range (have {len(src.instruments)} instruments)"
         )
 
+    labels = {t["index"]: t["name"] for t in list_midi_tracks(midi_path)}
+
     tempo = 120.0
     try:
         tempos = src.get_tempo_changes()[1]
@@ -147,7 +251,7 @@ def write_track_subset(
         clone = pretty_midi.Instrument(
             program=inst.program,
             is_drum=inst.is_drum,
-            name=inst.name,
+            name=labels.get(i) or inst.name or f"Track{i}",
         )
         for n in inst.notes:
             clone.notes.append(

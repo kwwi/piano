@@ -36,13 +36,36 @@ def test_list_and_manifest(tmp_path: Path):
     assert len(tracks) == 3
     assert tracks[0]["name"] == "Piano"
     assert tracks[0]["note_count"] == 2
+    assert tracks[0]["abbreviation"] == "Pno"
     assert tracks[1]["program"] == 40
+    assert tracks[1]["abbreviation"] == "Str"
     assert tracks[2]["is_drum"] is True
 
     manifest = write_tracks_manifest(mid, tmp_path / "tracks.json")
     text = manifest.read_text(encoding="utf-8")
     assert "Piano" in text
     assert "transcription_raw.mid" in text
+
+
+def test_unnamed_instruments_get_pno_labels(tmp_path: Path):
+    import pretty_midi
+
+    mid = tmp_path / "anon.mid"
+    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+    for pitch in (60, 64, 67):
+        inst = pretty_midi.Instrument(program=0, name="")
+        inst.notes.append(pretty_midi.Note(90, pitch, 0.0, 0.5))
+        pm.instruments.append(inst)
+    pm.write(str(mid))
+
+    tracks = list_midi_tracks(mid)
+    assert [t["name"] for t in tracks] == ["Pno0", "Pno1", "Pno2"]
+
+    from app.pipeline.tracks import annotate_instrument_names
+
+    annotate_instrument_names(mid)
+    pm2 = pretty_midi.PrettyMIDI(str(mid))
+    assert [inst.name for inst in pm2.instruments] == ["Pno0", "Pno1", "Pno2"]
 
 
 def test_write_subset_and_per_track(tmp_path: Path):

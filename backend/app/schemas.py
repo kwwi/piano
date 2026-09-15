@@ -31,6 +31,7 @@ class MidiTrackInfo(BaseModel):
     name: str
     program: int
     program_name: str
+    abbreviation: str = ""
     is_drum: bool = False
     note_count: int = 0
     duration_sec: float = 0.0

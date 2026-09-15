@@ -29,6 +29,23 @@ def midi_to_musicxml(
 
     score = converter.parse(str(midi_path))
 
+    # Prefer MIDI instrument names (e.g. Pno0) as MusicXML part labels so the
+    # engraved score matches the track picker.
+    try:
+        import pretty_midi
+
+        pm = pretty_midi.PrettyMIDI(str(midi_path))
+        for part, inst in zip(score.parts, pm.instruments):
+            label = (inst.name or "").strip()
+            if not label:
+                continue
+            part.partName = label
+            # Keep short abbreviation for staff margins when name looks like Pno0.
+            if len(label) <= 6:
+                part.partAbbreviation = label
+    except Exception:
+        pass
+
     if quantize:
         # Snap to sixteenth / triplet-eighth grids to clean up raw MIDI timing.
         score = score.quantize((4, 3), inPlace=False)

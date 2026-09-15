@@ -16,7 +16,7 @@ from .separate import separate_for_melody
 from .to_abc import midi_to_abc
 from .to_musicxml import midi_to_musicxml
 from .to_pdf import PdfError, musicxml_to_pdf
-from .tracks import write_per_track_midis, write_tracks_manifest
+from .tracks import annotate_instrument_names, write_per_track_midis, write_tracks_manifest
 from .transcribe import transcribe_to_midi
 
 ProgressCB = Callable[[str, float], None]
@@ -81,6 +81,10 @@ def run_pipeline(
     log.info("③ 转录为 MIDI（引擎=%s）…", model)
     raw_midi = workdir / "transcription_raw.mid"
     transcribe_to_midi(to_transcribe, raw_midi, model=model)
+    try:
+        annotate_instrument_names(raw_midi)
+    except Exception as exc:
+        log.warning("③ 音轨命名标注跳过：%s", exc)
     log.info("③ 原始 MIDI 已写出：%s", raw_midi.name)
     cb("transcribe", 0.72)
 

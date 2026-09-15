@@ -39,6 +39,7 @@ class MidiTrackInfo {
   final String name;
   final int program;
   final String programName;
+  final String abbreviation;
   final bool isDrum;
   final int noteCount;
   final double durationSec;
@@ -48,6 +49,7 @@ class MidiTrackInfo {
     required this.name,
     required this.program,
     required this.programName,
+    this.abbreviation = '',
     this.isDrum = false,
     this.noteCount = 0,
     this.durationSec = 0,
@@ -58,18 +60,21 @@ class MidiTrackInfo {
         name: json['name'] as String? ?? 'Track',
         program: json['program'] as int? ?? 0,
         programName: json['program_name'] as String? ?? '',
+        abbreviation: json['abbreviation'] as String? ?? '',
         isDrum: json['is_drum'] as bool? ?? false,
         noteCount: json['note_count'] as int? ?? 0,
         durationSec: (json['duration_sec'] as num?)?.toDouble() ?? 0,
       );
 
-  String get label {
-    final notes = noteCount > 0 ? ' · $noteCount 音' : '';
-    if (isDrum) return '$name$notes';
-    if (programName.isNotEmpty && programName != name) {
-      return '$name（$programName）$notes';
-    }
-    return '$name$notes';
+  /// Chip label: prefer MIDI / score-style name (e.g. ``Pno0``).
+  String get chipLabel => name;
+
+  String get detailLabel {
+    final notes = noteCount > 0 ? '$noteCount 音' : '';
+    final prog = programName.isNotEmpty && programName != name
+        ? programName
+        : '';
+    return [prog, notes].where((s) => s.isNotEmpty).join(' · ');
   }
 }
 
