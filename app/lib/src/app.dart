@@ -31,6 +31,8 @@ class JianpuStaffApp extends StatelessWidget {
       theme: ThemeData(
         colorScheme: scheme,
         useMaterial3: true,
+        // Bundled Roboto — avoids fonts.gstatic.com (blocked in some networks).
+        fontFamily: 'Roboto',
         appBarTheme: AppBarTheme(
           backgroundColor: scheme.primary,
           foregroundColor: scheme.onPrimary,

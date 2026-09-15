@@ -16,6 +16,7 @@
 | `file_picker`, `image_picker`, `permission_handler` | 选择文件/权限 | MIT/BSD | ✅ |
 | `pdf`, `printing` | 导出 PDF | Apache-2.0 / MIT | ✅ |
 | `http`, `path_provider`, `path` | 网络/存储 | BSD/MIT | ✅ |
+| Jianpu OMR (`omr.dart` + `POST /omr`) | 图片简谱纠偏/识别 | 本项目 + Pillow (HPND) | ✅ 端上投影剖面纠偏 + 字形分类;服务端可选 pytesseract(Apache-2.0);手写仍需用户校对 |
 
 ## 后端 (Python)
 

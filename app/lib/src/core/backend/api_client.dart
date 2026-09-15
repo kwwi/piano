@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 
@@ -29,6 +31,35 @@ class JobStatus {
         stage: json['stage'] as String?,
         error: json['error'] as String?,
       );
+}
+
+/// Result of ``POST /omr`` (Jianpu image recognition).
+class OmrApiResult {
+  final String dsl;
+  final double confidence;
+  final String message;
+  final List<int>? deskewedPng;
+
+  const OmrApiResult({
+    required this.dsl,
+    required this.confidence,
+    required this.message,
+    this.deskewedPng,
+  });
+
+  factory OmrApiResult.fromJson(Map<String, dynamic> json) {
+    List<int>? png;
+    final b64 = json['deskewed_png_base64'] as String?;
+    if (b64 != null && b64.isNotEmpty) {
+      png = base64Decode(b64);
+    }
+    return OmrApiResult(
+      dsl: json['dsl'] as String? ?? '',
+      confidence: (json['confidence'] as num?)?.toDouble() ?? 0,
+      message: json['message'] as String? ?? '',
+      deskewedPng: png,
+    );
+  }
 }
 
 /// Client for the FastAPI backend that powers the "upload audio/video" feature.
@@ -64,6 +95,25 @@ class ApiClient {
       throw ApiException('创建任务失败 (${resp.statusCode}): ${resp.body}');
     }
     return (jsonDecode(resp.body) as Map<String, dynamic>)['job_id'] as String;
+  }
+
+  /// Deskew + OCR a Jianpu photo. Returns editable DSL for the preview dialog.
+  Future<OmrApiResult> recognizeJianpuImage({
+    required List<int> bytes,
+    String filename = 'jianpu.jpg',
+  }) async {
+    if (bytes.length > maxUploadBytes) {
+      throw ApiException('图片超过 100MB 上限');
+    }
+    final req = http.MultipartRequest('POST', _u('/omr'))
+      ..files
+          .add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    final streamed = await _http.send(req);
+    final resp = await http.Response.fromStream(streamed);
+    if (resp.statusCode != 200) {
+      throw ApiException('图片识别失败 (${resp.statusCode}): ${resp.body}');
+    }
+    return OmrApiResult.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
   Future<JobStatus> getStatus(String id) async {
@@ -104,9 +154,18 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
-/// Default backend endpoint. Override via [ProviderScope] overrides in tests or
-/// to point at a deployed server.
-final backendBaseUrlProvider = Provider<String>((ref) => 'http://10.0.2.2:8000');
+/// Default backend endpoint.
+/// - Web / desktop → localhost
+/// - Android emulator → 10.0.2.2 (host loopback)
+final backendBaseUrlProvider = Provider<String>((ref) {
+  if (kIsWeb) return 'http://127.0.0.1:8000';
+  switch (defaultTargetPlatform) {
+    case TargetPlatform.android:
+      return 'http://10.0.2.2:8000';
+    default:
+      return 'http://127.0.0.1:8000';
+  }
+});
 
 final apiClientProvider = Provider<ApiClient>((ref) {
   return ApiClient(baseUrl: ref.watch(backendBaseUrlProvider));

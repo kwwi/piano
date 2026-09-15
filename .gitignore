@@ -35,3 +35,6 @@ packages/jianpu_core/out/
 # Vendored Verovio web runtime (large; regenerate via app/tool/setup_web_verovio.sh)
 app/web/verovio/
 app/web/verovio_worker.dart.js
+
+# Bundled Material fonts (copied from Flutter SDK; see app/tool/setup_fonts.sh)
+app/assets/fonts/

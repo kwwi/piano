@@ -135,4 +135,20 @@ title: Twinkle
       expect(restored.measures[1].notes[2].degree, 6);
     });
   });
+
+  group('JianpuDslWriter', () {
+    test('round-trips parse → write → parse for Twinkle', () {
+      final original = parser.parse(JianpuSamples.twinkle);
+      const writer = JianpuDslWriter();
+      final dsl = writer.write(original);
+      final again = parser.parse(dsl);
+      expect(again.tonic, original.tonic);
+      expect(again.beats, original.beats);
+      expect(again.measures.length, original.measures.length);
+      expect(
+        again.measures.first.notes.map((n) => n.degree).toList(),
+        original.measures.first.notes.map((n) => n.degree).toList(),
+      );
+    });
+  });
 }

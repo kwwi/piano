@@ -1,12 +1,14 @@
 """FastAPI entrypoint for the audio/video -> MusicXML backend."""
 from __future__ import annotations
 
+import base64
 import uuid
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from .config import MAX_UPLOAD_BYTES
+from .pipeline.omr import run_omr
 from .runner import submit
 from .schemas import JobCreated, JobStatus, JobState
 from .store import store
@@ -17,6 +19,28 @@ app = FastAPI(title="Jianpu Staff Backend", version="0.1.0")
 @app.get("/")
 def health() -> dict:
     return {"status": "ok", "max_upload_bytes": MAX_UPLOAD_BYTES}
+
+
+@app.post("/omr")
+async def omr_jianpu(file: UploadFile = File(...)) -> JSONResponse:
+    """Deskew + OCR a Jianpu photo; returns editable DSL for the client preview."""
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty upload")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Upload exceeds 100MB limit")
+    try:
+        result = run_omr(data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return JSONResponse(
+        {
+            "dsl": result.dsl,
+            "confidence": result.confidence,
+            "message": result.message,
+            "deskewed_png_base64": base64.b64encode(result.deskewed_png).decode("ascii"),
+        }
+    )
 
 
 @app.post("/jobs", response_model=JobCreated)

@@ -8,6 +8,7 @@ library;
 
 export 'src/jianpu_model.dart';
 export 'src/jianpu_parser.dart';
+export 'src/jianpu_dsl_writer.dart';
 export 'src/musicxml_builder.dart';
 export 'src/midi_builder.dart';
 export 'src/pitch.dart';

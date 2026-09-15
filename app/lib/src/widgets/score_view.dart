@@ -34,7 +34,12 @@ class _ScoreViewState extends ConsumerState<ScoreView> {
   void didUpdateWidget(covariant ScoreView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.musicXml != widget.musicXml) {
-      setState(() => _svg = _render());
+      // Use a block body: `() => _svg = _render()` would *return* the Future
+      // from the assignment and trip Flutter's "setState callback returned a
+      // Future" assertion (triggered when OMR / editor updates the MusicXML).
+      setState(() {
+        _svg = _render();
+      });
     }
   }
 

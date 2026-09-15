@@ -56,5 +56,19 @@ flutter run                # Android device / emulator (or iOS Simulator)
 flutter analyze
 ```
 
+### Web (Chrome) — 国内网络注意
+
+默认会从 `gstatic.com` 拉 CanvasKit / 字体，常被墙导致白屏。请用本地资源：
+
+```bash
+# 首次：拷贝 Verovio web 运行时
+bash tool/setup_web_verovio.sh
+
+# 关键 CDN，用本机 Flutter SDK 里的 CanvasKit
+flutter run -d chrome --no-web-resources-cdn
+```
+
+Roboto 已打包进 `assets/fonts/`，不再依赖 `fonts.gstatic.com`。
+
 > The heavy pure-Dart logic is tested in `../packages/jianpu_core`
 > (`dart test`), independent of Flutter.

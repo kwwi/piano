@@ -5,13 +5,21 @@ thread pool so the API works standalone.
 """
 from __future__ import annotations
 
+import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import CELERY_BROKER_URL
+from .config import CELERY_BROKER_URL, STORAGE_DIR
 from .pipeline.orchestrator import run_pipeline
 from .schemas import JobState
 from .store import store
+
+# librosa/numba (pulled in by Basic Pitch) fails in worker threads when it
+# cannot write a function cache next to the installed package. Point the cache
+# at a writable directory under our storage root before any ML import happens.
+_numba_cache = STORAGE_DIR / ".numba_cache"
+_numba_cache.mkdir(parents=True, exist_ok=True)
+os.environ.setdefault("NUMBA_CACHE_DIR", str(_numba_cache))
 
 _executor = ThreadPoolExecutor(max_workers=2)
 

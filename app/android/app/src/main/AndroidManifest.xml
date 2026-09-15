@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Feature 2: microphone pitch detection -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <!-- Feature 1 OMR: camera / gallery for Jianpu images -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <!-- Feature 3: upload to cloud backend -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+
     <application
         android:label="jianpu_staff"
         android:name="${applicationName}"
