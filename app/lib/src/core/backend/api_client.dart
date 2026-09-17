@@ -145,8 +145,11 @@ class ApiClient {
     required List<int> bytes,
     required String filename,
     bool removeVocals = false,
-    bool extractMelody = true,
-    String model = 'mt3',
+    bool extractMelody = false,
+    String model = 'muscriptor',
+    bool splitAudio = false,
+    double splitSeconds = 30,
+    String arrangement = 'full',
   }) async {
     if (bytes.length > maxUploadBytes) {
       throw ApiException('文件超过 100MB 上限 (${bytes.length ~/ (1024 * 1024)}MB)');
@@ -155,6 +158,9 @@ class ApiClient {
       ..fields['remove_vocals'] = removeVocals.toString()
       ..fields['extract_melody'] = extractMelody.toString()
       ..fields['model'] = model
+      ..fields['split_audio'] = splitAudio.toString()
+      ..fields['split_seconds'] = splitSeconds.toString()
+      ..fields['arrangement'] = arrangement
       ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
     final streamed = await _http.send(req);
     final resp = await http.Response.fromStream(streamed);
@@ -191,7 +197,7 @@ class ApiClient {
     return JobStatus.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Uri _jobArtifact(String id, String artifact, {List<int>? tracks}) {
+  Uri _jobArtifact(String id, String artifact, {List<String>? tracks}) {
     final base = Uri.parse('$baseUrl/jobs/$id/$artifact');
     if (tracks == null || tracks.isEmpty) return base;
     return base.replace(queryParameters: {'tracks': tracks.join(',')});
@@ -205,19 +211,20 @@ class ApiClient {
     return JobTracks.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future<String> getMusicXml(String id, {List<int>? tracks}) async {
+  Future<String> getMusicXml(String id, {List<String>? tracks}) async {
     final resp = await _http.get(_jobArtifact(id, 'musicxml', tracks: tracks));
     if (resp.statusCode != 200) {
-      throw ApiException('获取结果失败 (${resp.statusCode})');
+      throw ApiException('获取结果失败 (${resp.statusCode}): ${resp.body}');
     }
     return utf8.decode(resp.bodyBytes);
   }
 
-  /// Download MIDI for [tracks] (null/empty = full transcription_raw.mid).
-  Future<List<int>> getMidi(String id, {List<int>? tracks}) async {
+  /// Download MIDI for [tracks] tokens (null/empty = full multi-track MIDI).
+  /// Tokens: ``0``, ``m0`` (melody), ``c0`` (chords).
+  Future<List<int>> getMidi(String id, {List<String>? tracks}) async {
     final resp = await _http.get(_jobArtifact(id, 'midi', tracks: tracks));
     if (resp.statusCode != 200) {
-      throw ApiException('获取 MIDI 失败 (${resp.statusCode})');
+      throw ApiException('获取 MIDI 失败 (${resp.statusCode}): ${resp.body}');
     }
     return resp.bodyBytes;
   }
@@ -231,8 +238,8 @@ class ApiClient {
     return resp.bodyBytes;
   }
 
-  /// Download ABC for [tracks] (null/empty = full score).
-  Future<String> getAbc(String id, {List<int>? tracks}) async {
+  /// Download ABC for [tracks] tokens (null/empty = full score).
+  Future<String> getAbc(String id, {List<String>? tracks}) async {
     final resp = await _http.get(_jobArtifact(id, 'abc', tracks: tracks));
     if (resp.statusCode != 200) {
       throw ApiException('获取 ABC 失败 (${resp.statusCode})');

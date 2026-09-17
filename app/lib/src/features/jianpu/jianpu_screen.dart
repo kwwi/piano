@@ -133,9 +133,14 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
           final where = await export.saveMidi(exportScore);
           messenger.showSnackBar(SnackBar(content: Text('已导出 MIDI：$where')));
         case 'pdf':
-          final svg = await ref.read(verovioRendererProvider).render(exportXml);
-          await export.sharePdf(svg);
-          messenger.showSnackBar(const SnackBar(content: Text('已导出 PDF')));
+          final renderer = ref.read(verovioRendererProvider);
+          final first = await renderer.engrave(exportXml, page: 1);
+          final svgs = <String>[first.svg];
+          for (var p = 2; p <= first.pageCount; p++) {
+            svgs.add((await renderer.engrave(exportXml, page: p)).svg);
+          }
+          final where = await export.sharePdfPages(svgs);
+          messenger.showSnackBar(SnackBar(content: Text('已导出 PDF：$where')));
       }
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('导出失败: $e')));

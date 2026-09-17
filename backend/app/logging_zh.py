@@ -14,6 +14,7 @@ STAGE_ZH: dict[str, str] = {
     "extract": "提取音轨",
     "separate": "分离主旋律/人声",
     "transcribe": "音频转 MIDI",
+    "arrange": "编配主旋律/和弦",
     "midi": "导出 MIDI / 音轨清单",
     "melody": "提取单音主旋律",
     "quantize": "节拍网格量化",

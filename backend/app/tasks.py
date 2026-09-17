@@ -15,8 +15,11 @@ def process_job(
     job_id: str,
     input_path: str,
     remove_vocals: bool = False,
-    extract_melody: bool = True,
+    extract_melody: bool = False,
     model: str | None = None,
+    split_audio: bool = False,
+    split_seconds: float | None = None,
+    arrangement: str | None = None,
 ) -> str:
     model = model or DEFAULT_MODEL
     store.update(job_id, status=JobState.processing, stage="extract", progress=0.01)
@@ -31,6 +34,9 @@ def process_job(
             remove_vocals_first=remove_vocals,
             extract_vocals_melody=extract_melody,
             model=model,
+            split_audio=split_audio,
+            split_seconds=split_seconds,
+            arrangement=arrangement,
             on_progress=progress,
         )
         store.update(

@@ -1,11 +1,25 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:verovio_flutter/verovio_flutter.dart';
 
+/// One engraved Verovio page plus total page count for the loaded score.
+class EngravedPage {
+  const EngravedPage({
+    required this.svg,
+    required this.page,
+    required this.pageCount,
+  });
+
+  final String svg;
+  final int page;
+  final int pageCount;
+}
+
 /// Thin wrapper around [VerovioAsyncService] that lazily boots the toolkit on a
 /// worker isolate and engraves MusicXML/MEI into SVG on-device (offline).
 class VerovioRenderer {
   VerovioAsyncService? _service;
   Future<VerovioAsyncService>? _boot;
+  String? _loadedData;
 
   Future<VerovioAsyncService> _ensure() {
     return _boot ??= _spawn();
@@ -18,21 +32,41 @@ class VerovioRenderer {
     return service;
   }
 
+  Future<void> _loadIfNeeded(VerovioAsyncService service, String data) async {
+    if (_loadedData == data) return;
+    await service.loadData(data);
+    _loadedData = data;
+  }
+
   /// Load [data] (MusicXML, MEI, ABC, …) and return the SVG for [page].
   ///
   /// The raw SVG is normalized (see [normalizeVerovioSvg]) so that `flutter_svg`
   /// renders it correctly on every platform.
   Future<String> render(String data, {int page = 1}) async {
+    final engraved = await engrave(data, page: page);
+    return engraved.svg;
+  }
+
+  /// Load [data] once (cached) and engrave [page], returning SVG + page count.
+  Future<EngravedPage> engrave(String data, {int page = 1}) async {
     final service = await _ensure();
-    await service.loadData(data);
-    final svg = await service.renderToSvg(page);
-    return normalizeVerovioSvg(svg);
+    await _loadIfNeeded(service, data);
+    final pageCount = await service.pageCount;
+    final total = pageCount < 1 ? 1 : pageCount;
+    final safePage = page.clamp(1, total);
+    final svg = await service.renderToSvg(safePage);
+    return EngravedPage(
+      svg: normalizeVerovioSvg(svg),
+      page: safePage,
+      pageCount: total,
+    );
   }
 
   void dispose() {
     _service?.dispose();
     _service = null;
     _boot = null;
+    _loadedData = null;
   }
 }
 
@@ -82,17 +116,33 @@ String normalizeVerovioSvg(String svg) {
     final token = m.group(0)!;
     final isOpen = !token.startsWith('</');
     if (isOpen) {
+      final selfClosing = RegExp(r'/>\s*$').hasMatch(token);
       if (depth == 0) {
-        buffer.write(token); // keep the root <svg> as-is
-        parentDims.add(rootDims);
+        if (selfClosing) {
+          // Invalid as root, but keep as empty svg rather than breaking depth.
+          buffer.write(token);
+        } else {
+          buffer.write(token); // keep the root <svg> as-is
+          parentDims.add(rootDims);
+          depth++;
+        }
+      } else if (selfClosing) {
+        // Nested self-closing <svg …/> → empty <g …></g> (no depth change).
+        final parent = parentDims.last;
+        final g = _svgOpenToGroup(token, parent[0], parent[1]);
+        buffer.write('${g.tag}</g>');
       } else {
         final parent = parentDims.last;
         final g = _svgOpenToGroup(token, parent[0], parent[1]);
         buffer.write(g.tag);
         parentDims.add(g.childDims);
+        depth++;
       }
-      depth++;
     } else {
+      if (depth <= 0) {
+        buffer.write('</svg>');
+        continue;
+      }
       depth--;
       if (depth == 0) {
         buffer.write('</svg>');

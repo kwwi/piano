@@ -30,6 +30,9 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
       STORAGE_DIR: /data
+      DEFAULT_MODEL: mt3
+      MT3_INFER_MODEL: mt3_pytorch
+      MT3_DEVICE: auto
     volumes:
       - storage:/data
     depends_on:

@@ -100,3 +100,24 @@ def test_subset_exports_musicxml_abc(tmp_path: Path):
     abc = midi_to_abc(subset, tmp_path / "piano.abc", title="Piano")
     text = abc.read_text(encoding="utf-8")
     assert text.lstrip().startswith("X:")
+
+
+def test_filter_musicxml_by_part_indices(tmp_path: Path):
+    from app.pipeline.tracks import filter_musicxml_by_part_indices
+
+    mid = _multi_track_midi(tmp_path / "raw.mid")
+    full = midi_to_musicxml(mid, tmp_path / "full.musicxml")
+    out = filter_musicxml_by_part_indices(full, tmp_path / "violin.musicxml", [1])
+    text = out.read_text(encoding="utf-8")
+    assert "<score-partwise" in text
+    assert text.count("<score-part ") == 1
+    assert text.count("<part id=") == 1
+    assert "Violin" in text
+    assert "Piano" not in text
+
+    # Selecting piano+drums drops violin.
+    out2 = filter_musicxml_by_part_indices(full, tmp_path / "pd.musicxml", [0, 2])
+    text2 = out2.read_text(encoding="utf-8")
+    assert text2.count("<score-part ") == 2
+    assert "Violin" not in text2
+    assert "Piano" in text2

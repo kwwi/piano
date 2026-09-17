@@ -235,8 +235,6 @@ def write_track_subset(
             f"track index out of range (have {len(src.instruments)} instruments)"
         )
 
-    labels = {t["index"]: t["name"] for t in list_midi_tracks(midi_path)}
-
     tempo = 120.0
     try:
         tempos = src.get_tempo_changes()[1]
@@ -251,7 +249,7 @@ def write_track_subset(
         clone = pretty_midi.Instrument(
             program=inst.program,
             is_drum=inst.is_drum,
-            name=labels.get(i) or inst.name or f"Track{i}",
+            name=(inst.name or "").strip() or f"Track{i}",
         )
         for n in inst.notes:
             clone.notes.append(
@@ -286,3 +284,118 @@ def resolve_raw_midi(job_dir: Path) -> Path:
     if legacy.is_file():
         return legacy
     raise TrackError("transcription_raw.mid not found")
+
+
+def resolve_score_midi(job_dir: Path) -> Path:
+    """MIDI used for score exports / track filtering (arranged when present)."""
+    score = job_dir / "transcription.mid"
+    if score.is_file():
+        return score
+    return resolve_raw_midi(job_dir)
+
+
+def _local_tag(tag: str) -> str:
+    if "}" in tag:
+        return tag.rsplit("}", 1)[-1]
+    return tag
+
+
+def filter_musicxml_by_part_indices(
+    musicxml_path: str | Path,
+    out_xml: str | Path,
+    indices: Iterable[int],
+) -> Path:
+    """Keep only selected parts from an existing MusicXML (by part-list order).
+
+    Much faster than re-running music21 on a MIDI subset: the full-score
+    ``score.musicxml`` is already quantized; we only drop unused ``score-part`` /
+    ``part`` elements and rewrite the file.
+    """
+    import xml.etree.ElementTree as ET
+
+    musicxml_path = Path(musicxml_path)
+    out_xml = Path(out_xml)
+    out_xml.parent.mkdir(parents=True, exist_ok=True)
+
+    want = list(indices)
+    if not want:
+        raise TrackError("at least one track index is required")
+    if not musicxml_path.is_file():
+        raise TrackError(f"MusicXML not found: {musicxml_path}")
+
+    # Preserve XML declaration / DOCTYPE when rewriting.
+    raw_text = musicxml_path.read_text(encoding="utf-8")
+    try:
+        root = ET.fromstring(raw_text)
+    except ET.ParseError as exc:
+        raise TrackError(f"invalid MusicXML: {exc}") from exc
+
+    part_list = next(
+        (c for c in root if _local_tag(c.tag) == "part-list"),
+        None,
+    )
+    if part_list is None:
+        raise TrackError("MusicXML missing part-list")
+
+    score_parts = [c for c in list(part_list) if _local_tag(c.tag) == "score-part"]
+    if not score_parts:
+        raise TrackError("MusicXML has no score-part entries")
+    if max(want) >= len(score_parts):
+        raise TrackError(
+            f"track index out of range (MusicXML has {len(score_parts)} parts)"
+        )
+
+    keep_ids: list[str] = []
+    keep_set: set[str] = set()
+    for i in want:
+        pid = score_parts[i].get("id")
+        if not pid:
+            raise TrackError(f"score-part at index {i} has no id")
+        keep_ids.append(pid)
+        keep_set.add(pid)
+
+    # Rebuild part-list: drop score-part not selected; drop part-group if any
+    # member is missing (avoids dangling group refs).
+    for child in list(part_list):
+        tag = _local_tag(child.tag)
+        if tag == "score-part":
+            if child.get("id") not in keep_set:
+                part_list.remove(child)
+        elif tag == "part-group":
+            part_list.remove(child)
+
+    # Drop body <part> elements not selected; preserve order of keep_ids.
+    body_parts = {
+        el.get("id"): el
+        for el in list(root)
+        if _local_tag(el.tag) == "part" and el.get("id")
+    }
+    for el in list(root):
+        if _local_tag(el.tag) == "part":
+            root.remove(el)
+    for pid in keep_ids:
+        part_el = body_parts.get(pid)
+        if part_el is None:
+            raise TrackError(f"MusicXML missing part body for id={pid}")
+        root.append(part_el)
+
+    # Prefer a stable declaration matching music21 output.
+    decl = '<?xml version="1.0" encoding="utf-8"?>\n'
+    doctype = ""
+    if "<!DOCTYPE" in raw_text:
+        start = raw_text.index("<!DOCTYPE")
+        end = raw_text.index(">", start) + 1
+        doctype = raw_text[start:end] + "\n"
+
+    xml_body = ET.tostring(root, encoding="unicode")
+    out_xml.write_text(decl + doctype + xml_body, encoding="utf-8")
+    return out_xml
+
+
+def resolve_full_musicxml(job_dir: Path) -> Path | None:
+    """Return the job's full-score MusicXML if present."""
+    for name in ("score.musicxml", "result.musicxml"):
+        p = job_dir / name
+        if p.is_file():
+            return p
+    return None

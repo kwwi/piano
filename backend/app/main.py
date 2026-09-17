@@ -9,7 +9,12 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .config import DEFAULT_MODEL, MAX_UPLOAD_BYTES
+from .config import (
+    DEFAULT_MODEL,
+    MAX_UPLOAD_BYTES,
+    SPLIT_AUDIO_DEFAULT,
+    SPLIT_SECONDS_DEFAULT,
+)
 from .logging_zh import get_logger, setup_logging
 from .pipeline.omr import run_omr
 from .runner import submit
@@ -37,20 +42,44 @@ app.add_middleware(
 def _on_startup() -> None:
     from .pipeline.jianpu_ly_export import jianpu_ly_available
     from .pipeline.omr_cv import opencv_available
+    from .pipeline.transcribe import (
+        basic_pitch_available,
+        crepe_available,
+        mt3_available,
+    )
 
-    log.info("后端已启动（OpenCV=%s, jianpu-ly=%s）", opencv_available(), jianpu_ly_available())
+    log.info(
+        "后端已启动（OpenCV=%s, jianpu-ly=%s, mt3-infer=%s, basic_pitch=%s, crepe=%s）",
+        opencv_available(),
+        jianpu_ly_available(),
+        mt3_available(),
+        basic_pitch_available(),
+        crepe_available(),
+    )
 
 
 @app.get("/")
 def health() -> dict:
+    from .config import DEFAULT_MODEL, MT3_DEVICE, MT3_INFER_MODEL
     from .pipeline.jianpu_ly_export import jianpu_ly_available
     from .pipeline.omr_cv import opencv_available
+    from .pipeline.transcribe import (
+        basic_pitch_available,
+        crepe_available,
+        mt3_available,
+    )
 
     return {
         "status": "ok",
         "max_upload_bytes": MAX_UPLOAD_BYTES,
         "opencv": opencv_available(),
         "jianpu_ly": jianpu_ly_available(),
+        "default_model": DEFAULT_MODEL,
+        "mt3_infer": mt3_available(),
+        "mt3_infer_model": MT3_INFER_MODEL,
+        "mt3_device": MT3_DEVICE,
+        "basic_pitch": basic_pitch_available(),
+        "crepe": crepe_available(),
     }
 
 
@@ -94,13 +123,29 @@ async def omr_jianpu(file: UploadFile = File(...)) -> JSONResponse:
 async def create_job(
     file: UploadFile = File(...),
     remove_vocals: bool = Form(False),
-    extract_melody: bool = Form(True),
+    extract_melody: bool = Form(False),
     model: str | None = Form(None),
+    split_audio: bool | None = Form(None),
+    split_seconds: float | None = Form(None),
+    arrangement: str | None = Form(None),  # ignored; always multi-track
 ) -> JobCreated:
     job_id = uuid.uuid4().hex
     job_dir = store.job_dir(job_id)
     dest = job_dir / (file.filename or "upload.bin")
     model = (model or DEFAULT_MODEL).strip().lower()
+    do_split = SPLIT_AUDIO_DEFAULT if split_audio is None else bool(split_audio)
+    chunk_sec = (
+        float(SPLIT_SECONDS_DEFAULT)
+        if split_seconds is None
+        else float(split_seconds)
+    )
+    if chunk_sec < 5 or chunk_sec > 180:
+        raise HTTPException(
+            status_code=400,
+            detail="split_seconds must be between 5 and 180",
+        )
+    # Legacy clients may still send arrangement; pipeline always keeps multi-track.
+    _ = arrangement
 
     # Stream to disk, enforcing the 100 MB ceiling as we go.
     size = 0
@@ -123,12 +168,13 @@ async def create_job(
         raise HTTPException(status_code=400, detail="Empty upload")
 
     log.info(
-        "【音视频任务】已创建 job=%s 文件=%s 大小=%.1f MB 主旋律=%s 模型=%s",
+        "【音视频任务】已创建 job=%s 文件=%s 大小=%.1f MB 主旋律=%s 模型=%s 分段=%s",
         job_id[:8],
         file.filename,
         size / (1024 * 1024),
         "是" if extract_melody and not remove_vocals else "否",
         model,
+        f"{chunk_sec:.0f}s" if do_split else "关",
     )
     store.create(job_id)
     submit(
@@ -137,6 +183,9 @@ async def create_job(
         remove_vocals=remove_vocals,
         extract_melody=extract_melody,
         model=model,
+        split_audio=do_split,
+        split_seconds=chunk_sec,
+        arrangement="full",
     )
     return JobCreated(job_id=job_id, status=JobState.queued)
 
@@ -173,33 +222,52 @@ def _job_raw_midi(job_id: str) -> Path:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-def _subset_midi_bytes(job_id: str, tracks: str | None) -> tuple[bytes, list[int] | None]:
-    """Return MIDI bytes for optional track filter; indices None = full raw."""
-    from .pipeline.tracks import (
-        TrackError,
-        list_midi_tracks,
-        parse_track_indices,
-        write_track_subset,
-    )
+def _job_track_count(job_id: str) -> int:
+    job_dir = store.job_dir(job_id)
+    manifest = job_dir / "tracks.json"
+    if manifest.is_file():
+        import json
 
-    raw = _job_raw_midi(job_id)
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        n = len(data.get("tracks") or [])
+        if n > 0:
+            return n
+    from .pipeline.tracks import list_midi_tracks
+
+    return len(list_midi_tracks(_job_raw_midi(job_id)))
+
+
+def _subset_midi_bytes(job_id: str, tracks: str | None) -> tuple[bytes, str | None]:
+    """Return MIDI bytes for optional track filter.
+
+    ``cache_key`` is ``None`` when returning the full score MIDI unchanged.
+    ``tracks`` may mix source indices with derived tokens ``mN`` / ``cN``.
+    """
+    from .pipeline.track_derive import (
+        assemble_selection_midi,
+        parse_track_selection,
+    )
+    from .pipeline.tracks import TrackError, resolve_score_midi
+
+    score = resolve_score_midi(store.job_dir(job_id))
+    job_dir = store.job_dir(job_id)
     try:
-        meta = list_midi_tracks(raw)
-        indices = parse_track_indices(tracks, track_count=len(meta))
+        track_count = _job_track_count(job_id)
+        selection = parse_track_selection(tracks, track_count=track_count)
     except TrackError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if indices is None:
-        return raw.read_bytes(), None
+    if selection is None:
+        return score.read_bytes(), None
 
-    cache_key = "_".join(f"{i:02d}" for i in indices)
-    cache = store.job_dir(job_id) / "exports" / f"tracks_{cache_key}.mid"
+    cache_key = selection.cache_key
+    cache = job_dir / "exports" / f"sel_{cache_key}.mid"
     if not cache.is_file():
         try:
-            write_track_subset(raw, cache, indices)
+            assemble_selection_midi(job_dir, selection, cache)
         except TrackError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return cache.read_bytes(), indices
+    return cache.read_bytes(), cache_key
 
 
 @app.get("/jobs/{job_id}/tracks", response_model=JobTracks)
@@ -250,7 +318,7 @@ def job_musicxml(
     job_id: str,
     tracks: str | None = Query(
         None,
-        description="Comma-separated instrument indices; omit for all tracks",
+        description="Selection tokens: 0,1,m0,c1 — omit for all source tracks",
     ),
 ):
     job = _require_done_job(job_id)
@@ -263,20 +331,64 @@ def job_musicxml(
             filename="score.musicxml",
         )
 
-    midi_bytes, indices = _subset_midi_bytes(job_id, tracks)
-    cache_key = "_".join(f"{i:02d}" for i in (indices or []))
-    xml_path = store.job_dir(job_id) / "exports" / f"tracks_{cache_key}.musicxml"
+    from .pipeline.track_derive import parse_track_selection
+    from .pipeline.tracks import (
+        TrackError,
+        filter_musicxml_by_part_indices,
+        resolve_full_musicxml,
+    )
+
+    job_dir = store.job_dir(job_id)
+    try:
+        track_count = _job_track_count(job_id)
+        selection = parse_track_selection(tracks, track_count=track_count)
+    except TrackError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if selection is None:
+        if job.result_path is None:
+            raise HTTPException(status_code=409, detail="Result not ready")
+        return FileResponse(
+            path=str(job.result_path),
+            media_type="application/vnd.recordare.musicxml+xml",
+            filename="score.musicxml",
+        )
+
+    cache_key = selection.cache_key
+    xml_path = job_dir / "exports" / f"sel_{cache_key}.musicxml"
     if not xml_path.is_file():
-        import tempfile
+        use_filter = (
+            not selection.has_derived
+            and bool(selection.sources)
+        )
+        wrote = False
+        if use_filter:
+            full_xml = resolve_full_musicxml(job_dir)
+            if full_xml is None and job.result_path is not None:
+                p = Path(job.result_path)
+                full_xml = p if p.is_file() else None
+            if full_xml is not None:
+                try:
+                    filter_musicxml_by_part_indices(
+                        full_xml, xml_path, selection.sources
+                    )
+                    wrote = True
+                except TrackError:
+                    wrote = False
+        if not wrote:
+            import tempfile
 
-        from .pipeline.to_musicxml import midi_to_musicxml
+            from .pipeline.to_musicxml import midi_to_musicxml
 
-        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-            tmp.write(midi_bytes)
-            tmp_path = Path(tmp.name)
-        try:
-            midi_to_musicxml(tmp_path, xml_path)
-        finally:
+            midi_bytes, _ = _subset_midi_bytes(job_id, tracks)
+            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                tmp.write(midi_bytes)
+                tmp_path = Path(tmp.name)
+            try:
+                midi_to_musicxml(tmp_path, xml_path)
+            except Exception as exc:
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             tmp_path.unlink(missing_ok=True)
     return FileResponse(
         path=str(xml_path),
@@ -290,17 +402,13 @@ def job_midi(
     job_id: str,
     tracks: str | None = Query(
         None,
-        description="Comma-separated instrument indices; omit for full raw MIDI",
+        description="Selection tokens: 0,1,m0,c1 — omit for full multi-track MIDI",
     ),
 ):
-    """MIDI for selected tracks (default: full transcription_raw.mid)."""
+    """MIDI for selected source / derived parts (default: full transcription)."""
     _require_done_job(job_id)
-    data, indices = _subset_midi_bytes(job_id, tracks)
-    name = (
-        "transcription_raw.mid"
-        if indices is None
-        else f"tracks_{'_'.join(f'{i:02d}' for i in indices)}.mid"
-    )
+    data, cache_key = _subset_midi_bytes(job_id, tracks)
+    name = "transcription.mid" if cache_key is None else f"sel_{cache_key}.mid"
     return Response(
         content=data,
         media_type="audio/midi",
@@ -338,9 +446,9 @@ def job_abc(
             filename="score.abc",
         )
 
-    midi_bytes, indices = _subset_midi_bytes(job_id, tracks)
-    cache_key = "_".join(f"{i:02d}" for i in (indices or []))
-    abc_path = job_dir / "exports" / f"tracks_{cache_key}.abc"
+    midi_bytes, cache_key = _subset_midi_bytes(job_id, tracks)
+    key = cache_key or "all"
+    abc_path = job_dir / "exports" / f"sel_{key}.abc"
     if not abc_path.is_file():
         import tempfile
 

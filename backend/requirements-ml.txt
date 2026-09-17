@@ -4,11 +4,26 @@
 # Polyphonic transcription (default engine). ONNX backend avoids TensorFlow.
 basic-pitch>=0.4.0
 onnxruntime>=1.17
+# resampy (via basic-pitch) still imports pkg_resources; setuptools 82+ removed it.
+setuptools>=68,<81
 
 # Vocal removal (HT-Demucs). Pulls torch/torchaudio.
 demucs>=4.0.1
 torch>=2.2
 torchaudio>=2.2
 
-# MT3 (high-accuracy, optional) is provisioned separately; it needs JAX + T5X
-# and large checkpoints. See app/pipeline/transcribe.py::_transcribe_mt3.
+# Monophonic F0 melody (model=crepe). Best on Demucs vocal stems.
+torchcrepe>=0.0.22
+
+# MuScriptor (model=muscriptor, default): multi-instrument full-mix AMT
+# (Kyutai × Mirelo). Weights CC BY-NC — accept HF license + HF_TOKEN.
+# Env: MUSCRIPTOR_SIZE=small|medium|large, MUSCRIPTOR_DEVICE=auto|cpu|cuda|mps
+muscriptor>=0.3.0
+
+# MT3 family (multi-instrument). PyTorch ports via mt3-infer; checkpoints
+# auto-download on first use. Env: MT3_INFER_MODEL, MT3_DEVICE, MT3_CHECKPOINT.
+# Variants: mt3_pytorch (default), mr_mt3 (faster), yourmt3.
+# Pin transformers: mt3-infer's vendored T5 expects 4.3x mask helpers; 5.x breaks
+# inference and the pipeline falls back to single-track Basic Pitch.
+mt3-infer>=0.2.0
+transformers>=4.40,<4.44

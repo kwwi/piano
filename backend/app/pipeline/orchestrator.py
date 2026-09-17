@@ -1,7 +1,10 @@
 """End-to-end pipeline: uploaded media -> MusicXML + MIDI + ABC + PDF.
 
 Stages:
-  extract → Demucs vocals (optional) → transcribe → exports from raw MIDI
+  extract → Demucs (optional, non-MuScriptor) → transcribe → multi-track exports
+
+Score exports keep the model’s multi-track MIDI as-is. Track subsetting for
+preview/export is done on demand via the API (client selects tracks).
 """
 from __future__ import annotations
 
@@ -9,7 +12,13 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
-from ..config import DEMUCS_MODEL, DEFAULT_MODEL, VIDEO_EXTENSIONS
+from ..config import (
+    DEMUCS_MODEL,
+    DEFAULT_MODEL,
+    SPLIT_OVERLAP_SECONDS,
+    SPLIT_SECONDS_DEFAULT,
+    VIDEO_EXTENSIONS,
+)
 from ..logging_zh import get_logger
 from .extract import extract_audio
 from .separate import separate_for_melody
@@ -32,23 +41,39 @@ def run_pipeline(
     workdir: str | Path,
     *,
     remove_vocals_first: bool = False,
-    extract_vocals_melody: bool = True,
+    extract_vocals_melody: bool = False,
     model: str | None = None,
     allow_separation_passthrough: bool = False,
+    split_audio: bool = False,
+    split_seconds: float | None = None,
+    arrangement: str | None = None,  # kept for API compat; always multi-track
     on_progress: ProgressCB | None = None,
 ) -> Path:
     """Run the full pipeline and return the path to the resulting MusicXML.
 
-    All score exports (MusicXML / MIDI / ABC / PDF) are generated from
-    ``transcription_raw.mid`` — the direct MT3 / Basic Pitch output — without
-    skyline collapse or beat re-quantization.
+    ``transcription_raw.mid`` and ``transcription.mid`` both store the model’s
+    multi-track MIDI (no skyline / lead-sheet rewrite). Clients pick tracks for
+    export and MIDI audition.
     """
     cb = on_progress or _noop
-    model = model or DEFAULT_MODEL
+    model = (model or DEFAULT_MODEL).strip().lower()
+    chunk_sec = float(split_seconds if split_seconds is not None else SPLIT_SECONDS_DEFAULT)
+    if arrangement and arrangement.strip().lower() not in {"", "full"}:
+        log.info(
+            "忽略编配选项 %r：仅输出模型多轨 MIDI（由客户端选轨）",
+            arrangement,
+        )
+    use_external_split = bool(split_audio) and model not in {"crepe", "muscriptor"}
     input_path = Path(input_path)
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
-    log.info("流水线开始：输入=%s 工作目录=%s", input_path.name, workdir)
+    log.info(
+        "流水线开始：输入=%s 工作目录=%s 模型=%s 分段=%s",
+        input_path.name,
+        workdir,
+        model,
+        f"{chunk_sec:.0f}s" if use_external_split else "关",
+    )
 
     cb("extract", 0.02)
     log.info("① 提取/规范化音轨…")
@@ -58,8 +83,23 @@ def run_pipeline(
     cb("extract", 0.10)
 
     prefer_vocals = extract_vocals_melody and not remove_vocals_first
+    if model == "crepe":
+        prefer_vocals = True
+        if remove_vocals_first:
+            log.warning("CREPE 忽略 remove_vocals，改用人声干声")
     to_transcribe = wav
-    if extract_vocals_melody or remove_vocals_first:
+    need_separate = False
+    if model == "muscriptor":
+        if extract_vocals_melody or remove_vocals_first:
+            log.info(
+                "② MuScriptor 使用完整混音（跳过 Demucs；多乐器转录不需要先分轨）"
+            )
+        cb("separate", 0.45)
+    else:
+        need_separate = (
+            extract_vocals_melody or remove_vocals_first or model == "crepe"
+        )
+    if need_separate:
         cb("separate", 0.15)
         stem_label = "人声主旋律" if prefer_vocals else "伴奏（无人声）"
         log.info("② 源分离：提取%s（Demucs）…", stem_label)
@@ -78,21 +118,40 @@ def run_pipeline(
         cb("separate", 0.45)
 
     cb("transcribe", 0.50)
-    log.info("③ 转录为 MIDI（引擎=%s）…", model)
+    log.info(
+        "③ 转录为 MIDI（引擎=%s%s）…",
+        model,
+        f"，分段 {chunk_sec:.0f}s" if use_external_split else "",
+    )
     raw_midi = workdir / "transcription_raw.mid"
-    transcribe_to_midi(to_transcribe, raw_midi, model=model)
+
+    def _chunk_progress(done: int, total: int) -> None:
+        frac = done / max(total, 1)
+        cb("transcribe", 0.50 + 0.20 * frac)
+
+    transcribe_to_midi(
+        to_transcribe,
+        raw_midi,
+        model=model,
+        split_audio=use_external_split,
+        split_seconds=chunk_sec,
+        split_overlap=SPLIT_OVERLAP_SECONDS,
+        chunks_dir=workdir / "chunks",
+        on_chunk_progress=_chunk_progress if use_external_split else None,
+    )
     try:
         annotate_instrument_names(raw_midi)
     except Exception as exc:
         log.warning("③ 音轨命名标注跳过：%s", exc)
     log.info("③ 原始 MIDI 已写出：%s", raw_midi.name)
-    cb("transcribe", 0.72)
+    cb("transcribe", 0.70)
 
-    # Keep raw MIDI as the canonical multi-track source; also mirror as
-    # transcription.mid for older clients.
-    midi = workdir / "transcription.mid"
-    shutil.copyfile(raw_midi, midi)
-    log.info("④ 保留原始 MIDI：%s（并镜像 %s）", raw_midi.name, midi.name)
+    # Keep score MIDI identical to the model output (multi-track).
+    score_midi = workdir / "transcription.mid"
+    cb("arrange", 0.72)
+    shutil.copyfile(raw_midi, score_midi)
+    log.info("④ 多轨 MIDI 就绪：%s", score_midi.name)
+    cb("arrange", 0.76)
 
     tracks_json = workdir / "tracks.json"
     tracks_dir = workdir / "tracks"
@@ -107,16 +166,16 @@ def run_pipeline(
     title = input_path.stem or "Transcription"
 
     cb("musicxml", 0.82)
-    log.info("⑤ 由原始 MIDI 生成 MusicXML（全轨）…")
+    log.info("⑤ 生成 MusicXML（多轨）…")
     xml = workdir / "score.musicxml"
-    midi_to_musicxml(raw_midi, xml)
+    midi_to_musicxml(score_midi, xml)
     log.info("⑤ MusicXML 完成：%s（%.1f KB）", xml.name, xml.stat().st_size / 1024)
 
     cb("abc", 0.90)
-    log.info("⑥ 由原始 MIDI 生成 ABC（全轨）…")
+    log.info("⑥ 生成 ABC…")
     abc_path = workdir / "score.abc"
     try:
-        midi_to_abc(raw_midi, abc_path, title=title)
+        midi_to_abc(score_midi, abc_path, title=title)
         log.info("⑥ ABC 完成：%s（%.1f KB）", abc_path.name, abc_path.stat().st_size / 1024)
     except Exception as exc:
         log.warning("⑥ ABC 生成失败（MusicXML 仍可用）：%s", exc)

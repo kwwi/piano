@@ -23,7 +23,9 @@
 | Pillow | 图像备选路径 | HPND | OpenCV 不足时回退 |
 | ffmpeg | 音视频抽轨 | LGPL/GPL 构建均可 | |
 | HT-Demucs | 人声/伴奏分离（主旋律取 vocals） | MIT | |
-| Basic Pitch / MT3 | 音频→MIDI | Apache-2.0 | |
+| Basic Pitch | 音频→MIDI | Apache-2.0 | |
+| **MuScriptor** | 音频→多乐器 MIDI（默认） | 代码 MIT；权重 **CC BY-NC 4.0** | 需 HF 许可 + `HF_TOKEN`；非商用权重 |
+| mt3-infer（MT3 PyTorch 族） | 音频→多乐器 MIDI | MIT（工具包）；权重各仓库自有许可 | 首次自动下载 checkpoint |
 | **librosa** | 节拍估计 + MIDI 网格量化 | ISC | |
 | **aubio**（可选） | GPL 节拍跟踪备选 | **GPL-3.0** | 已接线，安装即用 |
 | pretty_midi / music21 | MIDI 主旋律 skyline、MusicXML | MIT / BSD | |
@@ -34,9 +36,12 @@
 主路径不变：`jianpu_core` DSL/IR → MusicXML → Verovio。  
 可选：jianpu-ly → LilyPond（适合需要 LilyPond 排版时）。
 
-## 音视频 → 五线谱（主旋律）
+## 音视频 → 五线谱（多乐器默认）
 
-`extract → Demucs vocals → Basic Pitch → skyline 单音化 → librosa/aubio 量化 → MusicXML`
+`extract → MuScriptor（完整混音）→ 多轨 MIDI → MusicXML`  
+
+客户端勾选音轨后导出 / 试听（试听在 App 内用 MIDI 合成）。  
+备选：`model=mt3` / `basic_pitch`；人声可用 `model=crepe`。
 
 ## 历史「规避列表」（已解除硬限制）
 

@@ -34,9 +34,19 @@ def _run(
     remove_vocals: bool,
     extract_melody: bool,
     model: str,
+    split_audio: bool = False,
+    split_seconds: float | None = None,
+    arrangement: str | None = None,
 ) -> None:
     short = job_id[:8]
-    log.info("【任务 %s】开始处理：模型=%s 提取主旋律=%s", short, model, extract_melody)
+    log.info(
+        "【任务 %s】开始处理：模型=%s 提取主旋律=%s 分段=%s 编配=%s",
+        short,
+        model,
+        extract_melody,
+        split_audio,
+        arrangement or "full",
+    )
     store.update(job_id, status=JobState.processing, stage="extract", progress=0.01)
     job_dir = store.job_dir(job_id)
     try:
@@ -55,8 +65,9 @@ def _run(
             remove_vocals_first=remove_vocals,
             extract_vocals_melody=extract_melody,
             model=model,
-            # In dev/demo without the Demucs weights, don't hard-fail: fall back
-            # to analysing the full mix so the pipeline still yields a score.
+            split_audio=split_audio,
+            split_seconds=split_seconds,
+            arrangement=arrangement,
             allow_separation_passthrough=True,
             on_progress=progress,
         )
@@ -68,7 +79,7 @@ def _run(
             result_path=Path(xml),
         )
         log.info("【任务 %s】成功完成 → %s", short, xml)
-    except Exception as exc:  # noqa: BLE001 - surface any stage failure to client
+    except Exception as exc:  # noqa: BLE001
         store.update(job_id, status=JobState.error, error=str(exc))
         log.exception("【任务 %s】失败：%s", short, exc)
 
@@ -78,14 +89,17 @@ def submit(
     input_path: str,
     *,
     remove_vocals: bool = False,
-    extract_melody: bool = True,
+    extract_melody: bool = False,
     model: str | None = None,
+    split_audio: bool = False,
+    split_seconds: float | None = None,
+    arrangement: str | None = None,
 ) -> None:
     """Enqueue a job for execution."""
     model = model or DEFAULT_MODEL
     log.info("【任务 %s】已入队", job_id[:8])
     if CELERY_BROKER_URL:
-        from .tasks import process_job  # local import to avoid celery at import time
+        from .tasks import process_job
 
         process_job.delay(
             job_id,
@@ -93,6 +107,9 @@ def submit(
             remove_vocals,
             extract_melody,
             model,
+            split_audio,
+            split_seconds,
+            arrangement,
         )
     else:
         _executor.submit(
@@ -102,4 +119,7 @@ def submit(
             remove_vocals=remove_vocals,
             extract_melody=extract_melody,
             model=model,
+            split_audio=split_audio,
+            split_seconds=split_seconds,
+            arrangement=arrangement,
         )
