@@ -43,6 +43,8 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
   final Set<String> _selected = {};
   /// Last selection applied to MusicXML / export MIDI / ABC.
   final Set<String> _applied = {};
+  bool _arrangePiano = false;
+  bool _appliedArrangePiano = false;
   int _reloadToken = 0;
   int _previewToken = 0;
 
@@ -50,9 +52,12 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
 
   bool get _selectionDirty {
     if (_tracks.isEmpty) return false;
+    if (_arrangePiano != _appliedArrangePiano) return true;
     if (_selected.length != _applied.length) return true;
     return !_selected.containsAll(_applied);
   }
+
+  String? get _arrangeQuery => _arrangePiano ? 'piano' : null;
 
   @override
   void initState() {
@@ -104,6 +109,8 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
       _tracks = const [];
       _selected.clear();
       _applied.clear();
+      _arrangePiano = false;
+      _appliedArrangePiano = false;
     });
 
     final file = await FilePicker.pickFile(
@@ -204,16 +211,18 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
       _abcText = null; // invalidate until next export
     });
     try {
-      final xmlFuture = api.getMusicXml(jobId, tracks: q);
-      final midiFuture = () async {
-        try {
-          return Uint8List.fromList(await api.getMidi(jobId, tracks: q));
-        } catch (_) {
-          return null;
-        }
-      }();
-      final xml = await xmlFuture;
-      final midi = await midiFuture;
+      final arrange = _arrangeQuery;
+      // Sequential: MIDI first, then MusicXML from the same cached arrange.
+      // Parallel calls raced on writing exports/piano_*.mid and could diverge.
+      Uint8List? midi;
+      try {
+        midi = Uint8List.fromList(
+          await api.getMidi(jobId, tracks: q, arrange: arrange),
+        );
+      } catch (_) {
+        midi = null;
+      }
+      final xml = await api.getMusicXml(jobId, tracks: q, arrange: arrange);
       if (!mounted || token != _reloadToken) return;
       await _result.stop();
       setState(() {
@@ -222,6 +231,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
         _applied
           ..clear()
           ..addAll(_selected);
+        _appliedArrangePiano = _arrangePiano;
       });
     } catch (e) {
       if (mounted && token == _reloadToken) {
@@ -257,13 +267,19 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
     });
   }
 
-  /// Preview uses the current checkbox selection (not only last-confirmed).
+  /// Audition the last-confirmed selection (same MIDI as export / score).
   Future<void> _togglePreview() async {
     if (_previewPlaying) {
       await _result.stop();
       return;
     }
-    if (_tracks.isNotEmpty && _selected.isEmpty) {
+    if (_selectionDirty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('音轨/钢琴谱选择已变更，请先点「确认」再试听')),
+      );
+      return;
+    }
+    if (_tracks.isNotEmpty && _applied.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('请至少勾选一条音轨再试听')),
       );
@@ -277,7 +293,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
     try {
       late final Uint8List midi;
       final cached = _midiBytes;
-      if (!_selectionDirty && cached != null && cached.isNotEmpty) {
+      if (cached != null && cached.isNotEmpty) {
         midi = cached;
       } else {
         if (jobId == null) {
@@ -288,9 +304,11 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
         }
         setState(() => _previewLoading = true);
         final api = ref.read(apiClientProvider);
-        final q = _tracksQueryFor(_selected);
-        final fetched =
-            Uint8List.fromList(await api.getMidi(jobId, tracks: q));
+        final q = _tracksQueryFor(_applied);
+        final arrange = _appliedArrangePiano ? 'piano' : null;
+        final fetched = Uint8List.fromList(
+          await api.getMidi(jobId, tracks: q, arrange: arrange),
+        );
         if (!mounted || token != _previewToken) return;
         if (fetched.isEmpty) {
           messenger.showSnackBar(
@@ -299,6 +317,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
           return;
         }
         midi = fetched;
+        if (mounted) setState(() => _midiBytes = fetched);
       }
       await _result.togglePreview(midiBytes: midi);
     } catch (e) {
@@ -363,6 +382,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
               final fetched = await api.getAbc(
                 jobId,
                 tracks: _tracksQueryFor(_applied),
+                arrange: _appliedArrangePiano ? 'piano' : null,
               );
               abc = fetched;
               if (mounted) setState(() => _abcText = fetched);
@@ -510,6 +530,11 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
               dirty: _selectionDirty,
               enabled: !_busy,
               confirming: _trackLoading,
+              arrangePiano: _arrangePiano,
+              onArrangePianoChanged: (v) => setState(() {
+                _arrangePiano = v;
+                _error = null;
+              }),
               onToggleToken: _toggleToken,
               onSelectAllSources: _selectAllSources,
               onConfirm: _applySelection,

@@ -25,6 +25,7 @@
 | HT-Demucs | 人声/伴奏分离（主旋律取 vocals） | MIT | |
 | Basic Pitch | 音频→MIDI | Apache-2.0 | |
 | **MuScriptor** | 音频→多乐器 MIDI（默认） | 代码 MIT；权重 **CC BY-NC 4.0** | 需 HF 许可 + `HF_TOKEN`；非商用权重 |
+| **MuseScore**（可选 CLI） | MIDI→MusicXML 排谱 | GPL-3.0 | 安装后自动优先于 music21；`MUSESCORE_PATH` |
 | mt3-infer（MT3 PyTorch 族） | 音频→多乐器 MIDI | MIT（工具包）；权重各仓库自有许可 | 首次自动下载 checkpoint |
 | **librosa** | 节拍估计 + MIDI 网格量化 | ISC | |
 | **aubio**（可选） | GPL 节拍跟踪备选 | **GPL-3.0** | 已接线，安装即用 |
@@ -38,7 +39,7 @@
 
 ## 音视频 → 五线谱（多乐器默认）
 
-`extract → MuScriptor（完整混音）→ 多轨 MIDI → MusicXML`  
+`extract → MuScriptor（完整混音，可选拍网格量化）→ 多轨 MIDI → MuseScore CLI（优先）/ music21 → MusicXML`  
 
 客户端勾选音轨后导出 / 试听（试听在 App 内用 MIDI 合成）。  
 备选：`model=mt3` / `basic_pitch`；人声可用 `model=crepe`。

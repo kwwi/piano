@@ -19,7 +19,8 @@ skipped for that model). The client (Flutter) renders MusicXML with Verovio.
 | `app/pipeline/transcribe.py` | MuScriptor (default) / MT3 / Basic Pitch / CREPE → MIDI |
 | `app/pipeline/muscriptor_runner.py` | MuScriptor load + multi-track MIDI write |
 | `app/pipeline/mt3_runner.py` | mt3-infer load + 16 kHz resample + MIDI write |
-| `app/pipeline/to_musicxml.py` | music21 quantise + key/time inference → MusicXML |
+| `app/pipeline/to_musicxml.py` | MuseScore CLI（优先）/ music21 → MusicXML |
+| `app/pipeline/arrange_piano/` | 选轨 → lead → 钢琴编配（texture/rule）→ RH/LH |
 | `app/pipeline/to_abc.py` | MIDI → standard ABC |
 | `app/pipeline/to_pdf.py` | MusicXML → PDF (Verovio) |
 | `app/pipeline/orchestrator.py` | chains the stages with progress reporting |
@@ -30,9 +31,9 @@ skipped for that model). The client (Flutter) renders MusicXML with Verovio.
 
 - `POST /jobs` — multipart `file` + form `remove_vocals` (bool), `extract_melody` (bool), `model` (`muscriptor` default \| `mt3` \| `basic_pitch` \| `crepe`), optional `split_audio` / `split_seconds`. Always keeps **multi-track MIDI**; clients select tracks for MusicXML/MIDI export and in-app audition. Enforces the **100 MB** upload ceiling (HTTP 413 if exceeded). Returns `{job_id, status}`.
 - `GET /jobs/{id}` — `{job_id, status, progress, stage, error}`.
-- `GET /jobs/{id}/midi` — MIDI for selection tokens (`tracks=0,m0,c1`: source / melody / chords); omit for full multi-track.
+- `GET /jobs/{id}/midi` — MIDI for selection tokens (`tracks=0,m0,c1`: source / melody / chords); omit for full multi-track. Add `arrange=piano` for playable piano reduction (`piano_style=pop|ballad|drive`, `piano_chords=auto|off`).
 - `GET /jobs/{id}/midi/raw` — always full multi-track `transcription_raw.mid`.
-- `GET /jobs/{id}/musicxml` — MusicXML for the same selection tokens.
+- `GET /jobs/{id}/musicxml` — MusicXML for the same selection tokens (`arrange=piano` → piano grand-staff).
 - `GET /jobs/{id}/tracks` — instrument list (`index`, `name`, `program`, `note_count`, …).
 - `GET /jobs/{id}/abc` — standard ABC (`?tracks=` optional).
 - `GET /jobs/{id}/pdf` — PDF engraved from that MusicXML (Verovio; needs SVG→PNG tool).
@@ -63,11 +64,16 @@ cp .env.example .env
 export DEFAULT_MODEL=muscriptor
 export MUSCRIPTOR_SIZE=medium   # small (CPU) | medium | large (GPU)
 export MUSCRIPTOR_DEVICE=auto
+export MUSCRIPTOR_QUANTIZE=1    # default: snap MIDI to beat grid before score export
 # HF_TOKEN is normally set in backend/.env (loaded automatically)
+# export MUSESCORE_PATH="/Applications/MuseScore 4.app/Contents/MacOS/mscore"
 ```
 
 MuScriptor already windows audio in 5s chunks internally; external「分段转录」
 and Demucs vocal extraction are skipped for this model.
+
+**MIDI → MusicXML:** prefers **MuseScore CLI** (`mscore` / `MUSESCORE_PATH`) for
+readable engraving; falls back to music21 when MuseScore is not installed.
 
 MT3 remains available via **mt3-infer** (`model=mt3`: `mt3_pytorch` / `mr_mt3` /
 `yourmt3`). Configure with:

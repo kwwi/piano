@@ -60,7 +60,13 @@ def _on_startup() -> None:
 
 @app.get("/")
 def health() -> dict:
-    from .config import DEFAULT_MODEL, MT3_DEVICE, MT3_INFER_MODEL
+    from .config import (
+        DEFAULT_MODEL,
+        MT3_DEVICE,
+        MT3_INFER_MODEL,
+        PIANO_ARRANGER_BACKEND,
+        PIANO_ARRANGER_STYLE,
+    )
     from .pipeline.jianpu_ly_export import jianpu_ly_available
     from .pipeline.omr_cv import opencv_available
     from .pipeline.transcribe import (
@@ -80,6 +86,8 @@ def health() -> dict:
         "mt3_device": MT3_DEVICE,
         "basic_pitch": basic_pitch_available(),
         "crepe": crepe_available(),
+        "piano_arranger_backend": PIANO_ARRANGER_BACKEND,
+        "piano_arranger_style": PIANO_ARRANGER_STYLE,
     }
 
 
@@ -237,11 +245,33 @@ def _job_track_count(job_id: str) -> int:
     return len(list_midi_tracks(_job_raw_midi(job_id)))
 
 
-def _subset_midi_bytes(job_id: str, tracks: str | None) -> tuple[bytes, str | None]:
-    """Return MIDI bytes for optional track filter.
+def _parse_arrange(arrange: str | None) -> str | None:
+    if arrange is None or not str(arrange).strip():
+        return None
+    val = str(arrange).strip().lower()
+    if val in {"", "none", "full", "0", "false", "off"}:
+        return None
+    if val in {"piano", "piano_score", "1", "true", "on"}:
+        return "piano"
+    raise HTTPException(
+        status_code=400,
+        detail=f"invalid arrange={arrange!r} (use piano or omit)",
+    )
+
+
+def _subset_midi_bytes(
+    job_id: str,
+    tracks: str | None,
+    *,
+    arrange: str | None = None,
+    piano_style: str | None = None,
+    piano_chords: str | None = None,
+) -> tuple[bytes, str | None]:
+    """Return MIDI bytes for optional track filter / piano arrangement.
 
     ``cache_key`` is ``None`` when returning the full score MIDI unchanged.
     ``tracks`` may mix source indices with derived tokens ``mN`` / ``cN``.
+    ``arrange=piano`` runs lead→piano arranger→RH/LH postprocess.
     """
     from .pipeline.track_derive import (
         assemble_selection_midi,
@@ -256,6 +286,39 @@ def _subset_midi_bytes(job_id: str, tracks: str | None) -> tuple[bytes, str | No
         selection = parse_track_selection(tracks, track_count=track_count)
     except TrackError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    arrange_mode = _parse_arrange(arrange)
+    if arrange_mode == "piano":
+        from .config import PIANO_ARRANGER_AUTO_CHORDS, PIANO_ARRANGER_STYLE
+        from .pipeline.arrange_piano import ArrangePianoError, arrange_for_piano
+
+        style = (piano_style or PIANO_ARRANGER_STYLE or "pop").strip().lower()
+        auto_chords = PIANO_ARRANGER_AUTO_CHORDS
+        if piano_chords is not None and str(piano_chords).strip():
+            pc = str(piano_chords).strip().lower()
+            if pc in {"off", "0", "false", "no"}:
+                auto_chords = False
+            elif pc in {"auto", "on", "1", "true", "yes"}:
+                auto_chords = True
+
+        sel_key = selection.cache_key if selection is not None else "all"
+        chord_tag = "cauto" if auto_chords else "coff"
+        cache_key = f"piano_{sel_key}_{style}_{chord_tag}"
+        cache = job_dir / "exports" / f"{cache_key}.mid"
+        if not cache.is_file():
+            try:
+                arrange_for_piano(
+                    job_dir,
+                    selection,
+                    cache,
+                    style=style,
+                    auto_chords=auto_chords,
+                )
+            except ArrangePianoError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except TrackError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return cache.read_bytes(), cache_key
 
     if selection is None:
         return score.read_bytes(), None
@@ -320,8 +383,48 @@ def job_musicxml(
         None,
         description="Selection tokens: 0,1,m0,c1 — omit for all source tracks",
     ),
+    arrange: str | None = Query(
+        None,
+        description="piano = arrange selection into playable piano grand-staff",
+    ),
+    piano_style: str | None = Query(None, description="pop | ballad | drive"),
+    piano_chords: str | None = Query(
+        None, description="auto | off — auto-estimate chords when unset"
+    ),
 ):
     job = _require_done_job(job_id)
+    arrange_mode = _parse_arrange(arrange)
+
+    if arrange_mode == "piano":
+        from .pipeline.arrange_piano.to_grand_staff import piano_midi_to_musicxml
+
+        job_dir = store.job_dir(job_id)
+        midi_bytes, cache_key = _subset_midi_bytes(
+            job_id,
+            tracks,
+            arrange=arrange,
+            piano_style=piano_style,
+            piano_chords=piano_chords,
+        )
+        xml_path = job_dir / "exports" / f"{cache_key or 'piano'}_gs.musicxml"
+        if not xml_path.is_file():
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                tmp.write(midi_bytes)
+                tmp_path = Path(tmp.name)
+            try:
+                piano_midi_to_musicxml(tmp_path, xml_path)
+            except Exception as exc:
+                tmp_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            tmp_path.unlink(missing_ok=True)
+        return FileResponse(
+            path=str(xml_path),
+            media_type="application/vnd.recordare.musicxml+xml",
+            filename="piano.musicxml",
+        )
+
     if tracks is None or not tracks.strip():
         if job.result_path is None:
             raise HTTPException(status_code=409, detail="Result not ready")
@@ -404,11 +507,28 @@ def job_midi(
         None,
         description="Selection tokens: 0,1,m0,c1 — omit for full multi-track MIDI",
     ),
+    arrange: str | None = Query(
+        None,
+        description="piano = arrange selection into playable piano MIDI",
+    ),
+    piano_style: str | None = Query(None, description="pop | ballad | drive"),
+    piano_chords: str | None = Query(None, description="auto | off"),
 ):
     """MIDI for selected source / derived parts (default: full transcription)."""
     _require_done_job(job_id)
-    data, cache_key = _subset_midi_bytes(job_id, tracks)
-    name = "transcription.mid" if cache_key is None else f"sel_{cache_key}.mid"
+    data, cache_key = _subset_midi_bytes(
+        job_id,
+        tracks,
+        arrange=arrange,
+        piano_style=piano_style,
+        piano_chords=piano_chords,
+    )
+    if cache_key is None:
+        name = "transcription.mid"
+    elif str(cache_key).startswith("piano_"):
+        name = f"{cache_key}.mid"
+    else:
+        name = f"sel_{cache_key}.mid"
     return Response(
         content=data,
         media_type="audio/midi",
@@ -423,48 +543,62 @@ def job_abc(
         None,
         description="Comma-separated instrument indices; omit for all tracks",
     ),
+    arrange: str | None = Query(
+        None,
+        description="piano = ABC from arranged piano MIDI",
+    ),
+    piano_style: str | None = Query(None, description="pop | ballad | drive"),
+    piano_chords: str | None = Query(None, description="auto | off"),
 ):
     """ABC for selected tracks (default: full-score score.abc)."""
     _require_done_job(job_id)
     job_dir = store.job_dir(job_id)
+    arrange_mode = _parse_arrange(arrange)
 
-    if tracks is None or not tracks.strip():
-        abc_path = job_dir / "score.abc"
+    if arrange_mode == "piano" or (tracks is not None and tracks.strip()):
+        midi_bytes, cache_key = _subset_midi_bytes(
+            job_id,
+            tracks,
+            arrange=arrange,
+            piano_style=piano_style,
+            piano_chords=piano_chords,
+        )
+        key = cache_key or "all"
+        prefix = "" if str(key).startswith("piano_") else "sel_"
+        abc_path = job_dir / "exports" / f"{prefix}{key}.abc"
         if not abc_path.is_file():
-            raw = _job_raw_midi(job_id)
-            try:
-                from .pipeline.to_abc import midi_to_abc
+            import tempfile
 
-                midi_to_abc(raw, abc_path, title="Transcription")
+            from .pipeline.to_abc import midi_to_abc
+
+            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
+                tmp.write(midi_bytes)
+                tmp_path = Path(tmp.name)
+            try:
+                midi_to_abc(tmp_path, abc_path, title="Transcription")
             except Exception as exc:
+                tmp_path.unlink(missing_ok=True)
                 raise HTTPException(
                     status_code=500, detail=f"ABC generation failed: {exc}"
                 ) from exc
+            tmp_path.unlink(missing_ok=True)
         return FileResponse(
             path=str(abc_path),
             media_type="text/plain; charset=utf-8",
             filename="score.abc",
         )
 
-    midi_bytes, cache_key = _subset_midi_bytes(job_id, tracks)
-    key = cache_key or "all"
-    abc_path = job_dir / "exports" / f"sel_{key}.abc"
+    abc_path = job_dir / "score.abc"
     if not abc_path.is_file():
-        import tempfile
-
-        from .pipeline.to_abc import midi_to_abc
-
-        with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-            tmp.write(midi_bytes)
-            tmp_path = Path(tmp.name)
+        raw = _job_raw_midi(job_id)
         try:
-            midi_to_abc(tmp_path, abc_path, title="Transcription")
+            from .pipeline.to_abc import midi_to_abc
+
+            midi_to_abc(raw, abc_path, title="Transcription")
         except Exception as exc:
-            tmp_path.unlink(missing_ok=True)
             raise HTTPException(
                 status_code=500, detail=f"ABC generation failed: {exc}"
             ) from exc
-        tmp_path.unlink(missing_ok=True)
     return FileResponse(
         path=str(abc_path),
         media_type="text/plain; charset=utf-8",

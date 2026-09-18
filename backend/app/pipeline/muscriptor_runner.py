@@ -103,22 +103,64 @@ def _get_model():
     return model
 
 
+def _quantize_midi_bytes(midi_bytes: bytes) -> bytes:
+    """Snap note onsets/durations to a readable grid (music21).
+
+    Used when MuScriptor 0.3.x has no native ``quantize=`` flag, so sheet-music
+    conversion (MuseScore / music21) sees cleaner timing.
+    """
+    import tempfile
+
+    try:
+        from music21 import converter
+    except Exception:
+        return midi_bytes
+
+    with tempfile.TemporaryDirectory(prefix="piano_msq_") as tmp:
+        mid = Path(tmp) / "in.mid"
+        mid.write_bytes(midi_bytes)
+        try:
+            score = converter.parse(str(mid))
+            score = score.quantize((4, 3), inPlace=False)
+            out_path = Path(tmp) / "out.mid"
+            score.write("midi", fp=str(out_path))
+            return out_path.read_bytes()
+        except Exception as exc:
+            log.warning("MuScriptor MIDI 网格量化失败，使用原始 timing：%s", exc)
+            return midi_bytes
+
+
 def _infer_midi_bytes(model, audio_path: Path, *, quantize: bool) -> bytes:
     """Call the installed MuScriptor API (0.3.x vs newer main).
 
-    PyPI 0.3.0 exposes ``transcribe_to_midi`` → ``bytes``.
-    Newer git main renamed it to ``transcribe_and_postprocess`` → ``(bytes, grid)``
-    and added a ``quantize`` flag.
+    PyPI 0.3.0 exposes ``transcribe_to_midi`` → ``bytes`` (no quantize kwarg).
+    Newer git main has ``transcribe_and_postprocess(..., quantize=)``.
+    When quantize is requested on 0.3.x we post-snap with music21.
     """
     audio = str(audio_path)
-    if hasattr(model, "transcribe_to_midi"):
-        # 0.3.x: no quantize kwarg on the public helper.
-        return model.transcribe_to_midi(audio)
+
     if hasattr(model, "transcribe_and_postprocess"):
-        result = model.transcribe_and_postprocess(audio, quantize=quantize)
-        if isinstance(result, tuple):
-            return result[0]
-        return result
+        try:
+            result = model.transcribe_and_postprocess(audio, quantize=quantize)
+            midi_bytes = result[0] if isinstance(result, tuple) else result
+            if midi_bytes:
+                return midi_bytes
+        except TypeError:
+            # Older signature without quantize=
+            result = model.transcribe_and_postprocess(audio)
+            midi_bytes = result[0] if isinstance(result, tuple) else result
+            if midi_bytes and quantize:
+                return _quantize_midi_bytes(midi_bytes)
+            if midi_bytes:
+                return midi_bytes
+
+    if hasattr(model, "transcribe_to_midi"):
+        midi_bytes = model.transcribe_to_midi(audio)
+        if midi_bytes and quantize:
+            log.info("MuScriptor 0.3.x：后处理网格量化（MUSCRIPTOR_QUANTIZE=1）")
+            return _quantize_midi_bytes(midi_bytes)
+        return midi_bytes
+
     raise MuscriptorNotProvisioned(
         "MuScriptor TranscriptionModel has neither transcribe_to_midi "
         "nor transcribe_and_postprocess"

@@ -57,12 +57,18 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "muscriptor")
 # Weights are CC BY-NC — accept HF license; put HF_TOKEN in backend/.env.
 MUSCRIPTOR_SIZE = os.getenv("MUSCRIPTOR_SIZE", "medium").strip().lower()
 MUSCRIPTOR_DEVICE = os.getenv("MUSCRIPTOR_DEVICE", "auto").strip().lower()
-MUSCRIPTOR_QUANTIZE = os.getenv("MUSCRIPTOR_QUANTIZE", "0").strip().lower() in {
+MUSCRIPTOR_QUANTIZE = os.getenv("MUSCRIPTOR_QUANTIZE", "1").strip().lower() in {
     "1",
     "true",
     "yes",
     "on",
 }
+# MuseScore CLI for MIDI→MusicXML (optional). Empty → auto-detect mscore / app bundle.
+MUSESCORE_PATH = (
+    os.getenv("MUSESCORE_PATH", "").strip()
+    or os.getenv("MUSESCORE_BIN", "").strip()
+)
+MUSESCORE_TIMEOUT = float(os.getenv("MUSESCORE_TIMEOUT", "180"))
 # Hugging Face token for gated MuScriptor weights (also read as HF_TOKEN).
 HF_TOKEN = (
     os.getenv("HF_TOKEN", "").strip()
@@ -95,6 +101,20 @@ SPLIT_OVERLAP_SECONDS = float(os.getenv("SPLIT_OVERLAP_SECONDS", "1.0"))
 # Arrangement is always multi-track model output. Kept for API/env compat;
 # non-full values are ignored by the pipeline (client selects tracks instead).
 ARRANGEMENT_DEFAULT = os.getenv("ARRANGEMENT_DEFAULT", "full").strip().lower()
+
+# Export-time piano arrangement (GET …/midi|musicxml?arrange=piano).
+# Backend: auto | texture | structured | rule
+#   texture    — built-in AccoMontage-style texture retrieval (default path)
+#   structured — optional NeurIPS'24 Stage-1 if PIANO_ARRANGER_ROOT is set
+#   rule       — RH melody + LH chord pads only
+#   auto       — structured → texture → rule
+PIANO_ARRANGER_BACKEND = os.getenv("PIANO_ARRANGER_BACKEND", "auto").strip().lower()
+PIANO_ARRANGER_STYLE = os.getenv("PIANO_ARRANGER_STYLE", "pop").strip().lower()
+PIANO_ARRANGER_AUTO_CHORDS = os.getenv(
+    "PIANO_ARRANGER_AUTO_CHORDS", "1"
+).strip().lower() in {"1", "true", "yes", "on"}
+# Checkout of https://github.com/zhaojw1998/Structured-Arrangement-Code (+ ckpts).
+PIANO_ARRANGER_ROOT = os.getenv("PIANO_ARRANGER_ROOT", "").strip()
 
 # torchcrepe (model=crepe): monophonic F0 → Melody MIDI (best on Demucs vocals).
 # Default ``tiny`` — ``full`` on CPU can take tens of minutes for a 5‑minute song.

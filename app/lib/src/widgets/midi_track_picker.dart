@@ -15,6 +15,8 @@ class MidiTrackPicker extends StatelessWidget {
     this.dirty = false,
     this.enabled = true,
     this.confirming = false,
+    this.arrangePiano = false,
+    this.onArrangePianoChanged,
   });
 
   final List<MidiTrackInfo> tracks;
@@ -25,6 +27,8 @@ class MidiTrackPicker extends StatelessWidget {
   final bool dirty;
   final bool enabled;
   final bool confirming;
+  final bool arrangePiano;
+  final ValueChanged<bool>? onArrangePianoChanged;
 
   static String sourceToken(int index) => '$index';
   static String melodyToken(int index) => 'm$index';
@@ -81,11 +85,24 @@ class MidiTrackPicker extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              '每轨可勾选「原轨 / 主调 / 和弦」；确认后更新谱面与导出，试听按当前勾选在客户端播放。',
+              arrangePiano
+                  ? '钢琴谱模式：用勾选的主调（±和弦）编配为双手可弹大谱表；未勾主调时从原轨自动抽主调。'
+                  : '每轨可勾选「原轨 / 主调 / 和弦」；确认后更新谱面与导出，试听按当前勾选在客户端播放。',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
+            if (onArrangePianoChanged != null) ...[
+              const SizedBox(height: 4),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('钢琴谱'),
+                subtitle: const Text('吉他等乐器 → 钢琴可演奏五线谱'),
+                value: arrangePiano,
+                onChanged: enabled && !confirming ? onArrangePianoChanged : null,
+              ),
+            ],
             const SizedBox(height: 8),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 280),

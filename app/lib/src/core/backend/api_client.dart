@@ -197,10 +197,30 @@ class ApiClient {
     return JobStatus.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Uri _jobArtifact(String id, String artifact, {List<String>? tracks}) {
+  Uri _jobArtifact(
+    String id,
+    String artifact, {
+    List<String>? tracks,
+    String? arrange,
+    String? pianoStyle,
+    String? pianoChords,
+  }) {
     final base = Uri.parse('$baseUrl/jobs/$id/$artifact');
-    if (tracks == null || tracks.isEmpty) return base;
-    return base.replace(queryParameters: {'tracks': tracks.join(',')});
+    final params = <String, String>{};
+    if (tracks != null && tracks.isNotEmpty) {
+      params['tracks'] = tracks.join(',');
+    }
+    if (arrange != null && arrange.isNotEmpty) {
+      params['arrange'] = arrange;
+    }
+    if (pianoStyle != null && pianoStyle.isNotEmpty) {
+      params['piano_style'] = pianoStyle;
+    }
+    if (pianoChords != null && pianoChords.isNotEmpty) {
+      params['piano_chords'] = pianoChords;
+    }
+    if (params.isEmpty) return base;
+    return base.replace(queryParameters: params);
   }
 
   Future<JobTracks> getTracks(String id) async {
@@ -211,8 +231,21 @@ class ApiClient {
     return JobTracks.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
-  Future<String> getMusicXml(String id, {List<String>? tracks}) async {
-    final resp = await _http.get(_jobArtifact(id, 'musicxml', tracks: tracks));
+  Future<String> getMusicXml(
+    String id, {
+    List<String>? tracks,
+    String? arrange,
+    String? pianoStyle,
+    String? pianoChords,
+  }) async {
+    final resp = await _http.get(_jobArtifact(
+      id,
+      'musicxml',
+      tracks: tracks,
+      arrange: arrange,
+      pianoStyle: pianoStyle,
+      pianoChords: pianoChords,
+    ));
     if (resp.statusCode != 200) {
       throw ApiException('获取结果失败 (${resp.statusCode}): ${resp.body}');
     }
@@ -221,8 +254,22 @@ class ApiClient {
 
   /// Download MIDI for [tracks] tokens (null/empty = full multi-track MIDI).
   /// Tokens: ``0``, ``m0`` (melody), ``c0`` (chords).
-  Future<List<int>> getMidi(String id, {List<String>? tracks}) async {
-    final resp = await _http.get(_jobArtifact(id, 'midi', tracks: tracks));
+  /// Set [arrange] to ``piano`` for playable piano reduction.
+  Future<List<int>> getMidi(
+    String id, {
+    List<String>? tracks,
+    String? arrange,
+    String? pianoStyle,
+    String? pianoChords,
+  }) async {
+    final resp = await _http.get(_jobArtifact(
+      id,
+      'midi',
+      tracks: tracks,
+      arrange: arrange,
+      pianoStyle: pianoStyle,
+      pianoChords: pianoChords,
+    ));
     if (resp.statusCode != 200) {
       throw ApiException('获取 MIDI 失败 (${resp.statusCode}): ${resp.body}');
     }
@@ -239,8 +286,21 @@ class ApiClient {
   }
 
   /// Download ABC for [tracks] tokens (null/empty = full score).
-  Future<String> getAbc(String id, {List<String>? tracks}) async {
-    final resp = await _http.get(_jobArtifact(id, 'abc', tracks: tracks));
+  Future<String> getAbc(
+    String id, {
+    List<String>? tracks,
+    String? arrange,
+    String? pianoStyle,
+    String? pianoChords,
+  }) async {
+    final resp = await _http.get(_jobArtifact(
+      id,
+      'abc',
+      tracks: tracks,
+      arrange: arrange,
+      pianoStyle: pianoStyle,
+      pianoChords: pianoChords,
+    ));
     if (resp.statusCode != 200) {
       throw ApiException('获取 ABC 失败 (${resp.statusCode})');
     }
