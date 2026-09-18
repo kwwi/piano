@@ -1,0 +1,68 @@
+name: jianpu_staff
+description: "简谱/听音/音频转五线谱 — Jianpu, listen, and audio to staff notation (Android-first Flutter app)."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.5.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Pure-Dart notation engine (parser, IR, MusicXML/MIDI builders)
+  jianpu_core:
+    path: ../packages/jianpu_core
+
+  # State management & routing
+  flutter_riverpod: ^3.4.3
+  go_router: ^18.0.1
+
+  # Notation engraving (Verovio, LGPL-3.0, on-device FFI) + SVG display
+  verovio_flutter: ^0.3.3
+  flutter_svg: ^2.3.0
+
+  # Audio capture / playback for the listen feature
+  record: ^7.1.1
+  just_audio: ^0.10.6
+  pitch_detector_dart: ^0.0.7
+  fftea: ^1.5.0
+
+  # File / media selection for the upload feature
+  file_picker: ^12.3.0
+  image_picker: ^1.2.3
+  permission_handler: ^13.0.2
+
+  # Backend communication + local storage
+  http: ^1.6.0
+  path_provider: ^2.1.6
+  path: ^1.9.1
+
+  # Export. Pinned below pdf 3.13 / printing 5.15 which require xml ^7, while
+  # verovio_flutter needs xml ^6 — keep them on the xml ^6 line.
+  pdf: ">=3.10.0 <3.13.0"
+  printing: ">=5.12.0 <5.14.0"
+  image: ^4.10.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  fonts:
+    - family: Roboto
+      fonts:
+        - asset: assets/fonts/Roboto-Regular.ttf
+        - asset: assets/fonts/Roboto-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Roboto-Bold.ttf
+          weight: 700
+    # CJK fallback for Chinese UI / Verovio titles when Google Noto CDN is blocked.
+    # Install via: bash tool/setup_fonts.sh
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Regular.otf
+  assets:
+    - assets/fonts/
