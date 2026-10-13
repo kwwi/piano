@@ -45,6 +45,10 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
   final Set<String> _applied = {};
   bool _arrangePiano = false;
   bool _appliedArrangePiano = false;
+  /// Draft / confirmed score-generation mode (MusicXML only; MIDI audition
+  /// is unaffected).
+  ScoreMode _scoreMode = ScoreMode.perTrack;
+  ScoreMode _appliedScoreMode = ScoreMode.perTrack;
   int _reloadToken = 0;
   int _previewToken = 0;
 
@@ -53,6 +57,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
   bool get _selectionDirty {
     if (_tracks.isEmpty) return false;
     if (_arrangePiano != _appliedArrangePiano) return true;
+    if (!_arrangePiano && _scoreMode != _appliedScoreMode) return true;
     if (_selected.length != _applied.length) return true;
     return !_selected.containsAll(_applied);
   }
@@ -111,6 +116,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
       _applied.clear();
       _arrangePiano = false;
       _appliedArrangePiano = false;
+      _appliedScoreMode = _scoreMode;
     });
 
     final file = await FilePicker.pickFile(
@@ -149,6 +155,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
             : _splitAudio,
         splitSeconds: _splitSeconds,
         arrangement: 'full',
+        scoreMode: _scoreMode.wire,
       );
       final status = await api.pollUntilDone(
         jobId,
@@ -161,7 +168,12 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
         },
       );
       if (status.isError) {
-        setState(() => _error = '处理失败: ${status.error}');
+        final detail = (status.error ?? '').trim();
+        setState(() {
+          _error = detail.contains('MuScriptor')
+              ? (detail.isEmpty ? 'MuScriptor 暂时不可用' : detail)
+              : '处理失败: ${detail.isEmpty ? '未知错误' : detail}';
+        });
       } else {
         List<MidiTrackInfo> tracks = const [];
         String? trackErr;
@@ -212,17 +224,28 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
     });
     try {
       final arrange = _arrangeQuery;
+      final scoreMode = _scoreMode;
       // Sequential: MIDI first, then MusicXML from the same cached arrange.
       // Parallel calls raced on writing exports/piano_*.mid and could diverge.
       Uint8List? midi;
       try {
         midi = Uint8List.fromList(
-          await api.getMidi(jobId, tracks: q, arrange: arrange),
+          await api.getMidi(
+            jobId,
+            tracks: q,
+            arrange: arrange,
+            scoreMode: arrange == null ? scoreMode.wire : null,
+          ),
         );
       } catch (_) {
         midi = null;
       }
-      final xml = await api.getMusicXml(jobId, tracks: q, arrange: arrange);
+      final xml = await api.getMusicXml(
+        jobId,
+        tracks: q,
+        arrange: arrange,
+        scoreMode: scoreMode.wire,
+      );
       if (!mounted || token != _reloadToken) return;
       await _result.stop();
       setState(() {
@@ -232,6 +255,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
           ..clear()
           ..addAll(_selected);
         _appliedArrangePiano = _arrangePiano;
+        _appliedScoreMode = scoreMode;
       });
     } catch (e) {
       if (mounted && token == _reloadToken) {
@@ -275,7 +299,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
     }
     if (_selectionDirty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('音轨/钢琴谱选择已变更，请先点「确认」再试听')),
+        const SnackBar(content: Text('音轨/谱面选项已变更，请先点「确认」再试听')),
       );
       return;
     }
@@ -307,7 +331,12 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
         final q = _tracksQueryFor(_applied);
         final arrange = _appliedArrangePiano ? 'piano' : null;
         final fetched = Uint8List.fromList(
-          await api.getMidi(jobId, tracks: q, arrange: arrange),
+          await api.getMidi(
+            jobId,
+            tracks: q,
+            arrange: arrange,
+            scoreMode: arrange == null ? _appliedScoreMode.wire : null,
+          ),
         );
         if (!mounted || token != _previewToken) return;
         if (fetched.isEmpty) {
@@ -338,7 +367,7 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
     }
     if (_selectionDirty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('音轨选择已变更，请先点「确认」再导出谱子')),
+        const SnackBar(content: Text('音轨/谱面选项已变更，请先点「确认」再导出谱子')),
       );
       return;
     }
@@ -533,6 +562,11 @@ class _UploadScreenState extends ConsumerState<UploadScreen> {
               arrangePiano: _arrangePiano,
               onArrangePianoChanged: (v) => setState(() {
                 _arrangePiano = v;
+                _error = null;
+              }),
+              scoreMode: _scoreMode,
+              onScoreModeChanged: (m) => setState(() {
+                _scoreMode = m;
                 _error = null;
               }),
               onToggleToken: _toggleToken,

@@ -57,18 +57,35 @@ DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "muscriptor")
 # Weights are CC BY-NC — accept HF license; put HF_TOKEN in backend/.env.
 MUSCRIPTOR_SIZE = os.getenv("MUSCRIPTOR_SIZE", "medium").strip().lower()
 MUSCRIPTOR_DEVICE = os.getenv("MUSCRIPTOR_DEVICE", "auto").strip().lower()
-MUSCRIPTOR_QUANTIZE = os.getenv("MUSCRIPTOR_QUANTIZE", "1").strip().lower() in {
+# Off by default: MIDI2ScoreTransformer is trained on unquantized performance MIDI.
+MUSCRIPTOR_QUANTIZE = os.getenv("MUSCRIPTOR_QUANTIZE", "0").strip().lower() in {
     "1",
     "true",
     "yes",
     "on",
 }
-# MuseScore CLI for MIDI→MusicXML (optional). Empty → auto-detect mscore / app bundle.
-MUSESCORE_PATH = (
-    os.getenv("MUSESCORE_PATH", "").strip()
-    or os.getenv("MUSESCORE_BIN", "").strip()
-)
-MUSESCORE_TIMEOUT = float(os.getenv("MUSESCORE_TIMEOUT", "180"))
+
+# MIDI2ScoreTransformer (required) — MIDI → notation tokens → MusicXML.
+# Runs in its own Python 3.11 venv (custom music21 fork); see m2s_worker/setup_m2s.sh.
+_M2S_HOME = _BACKEND_ROOT / ".m2s"
+M2S_PYTHON = os.getenv("M2S_PYTHON", str(_M2S_HOME / "venv" / "bin" / "python")).strip()
+M2S_ROOT = os.getenv("M2S_ROOT", str(_M2S_HOME / "MIDI2ScoreTransformer")).strip()
+M2S_CKPT = os.getenv("M2S_CKPT", str(_M2S_HOME / "MIDI2ScoreTF.ckpt")).strip()
+# auto = cuda if available, else cpu (MPS is much slower for this decoder).
+M2S_DEVICE = os.getenv("M2S_DEVICE", "auto").strip().lower()  # auto | cuda | mps | cpu
+# Per-request timeout (seconds); CPU inference on a full song can take minutes.
+M2S_TIMEOUT = float(os.getenv("M2S_TIMEOUT", "900"))
+# Model load at worker start-up.
+M2S_STARTUP_TIMEOUT = float(os.getenv("M2S_STARTUP_TIMEOUT", "300"))
+
+# How pitched tracks are engraved:
+#   per_track  — every non-drum track → its own M2S grand-staff part
+#   piano_only — GM piano tracks (program 0–7) via M2S, others via music21 rules
+#   reduce_all — merge all non-drum tracks into one M2S piano score (drums dropped)
+SCORE_MODES = ("per_track", "piano_only", "reduce_all")
+SCORE_MODE_DEFAULT = os.getenv("SCORE_MODE_DEFAULT", "per_track").strip().lower()
+if SCORE_MODE_DEFAULT not in SCORE_MODES:
+    SCORE_MODE_DEFAULT = "per_track"
 # Hugging Face token for gated MuScriptor weights (also read as HF_TOKEN).
 HF_TOKEN = (
     os.getenv("HF_TOKEN", "").strip()

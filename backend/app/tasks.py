@@ -20,6 +20,7 @@ def process_job(
     split_audio: bool = False,
     split_seconds: float | None = None,
     arrangement: str | None = None,
+    score_mode: str | None = None,
 ) -> str:
     model = model or DEFAULT_MODEL
     store.update(job_id, status=JobState.processing, stage="extract", progress=0.01)
@@ -37,6 +38,7 @@ def process_job(
             split_audio=split_audio,
             split_seconds=split_seconds,
             arrangement=arrangement,
+            score_mode=score_mode,
             on_progress=progress,
         )
         store.update(

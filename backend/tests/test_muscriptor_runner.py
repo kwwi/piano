@@ -72,3 +72,39 @@ def test_transcribe_routes_to_muscriptor(tmp_path, monkeypatch):
     transcribe.transcribe_to_midi(wav, out, model="muscriptor", split_audio=True)
     assert called.get("ok")
     assert out.is_file()
+
+
+def test_transcribe_muscriptor_failure_does_not_fallback(tmp_path, monkeypatch):
+    """MuScriptor errors must surface to the client — never silently use MT3."""
+    from app.pipeline import transcribe
+
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"x")
+    out = tmp_path / "o.mid"
+    mt3_called = {"ok": False}
+    bp_called = {"ok": False}
+
+    def _boom(_audio, _midi):
+        raise RuntimeError("weights gated")
+
+    def _mt3(_audio, _midi):
+        mt3_called["ok"] = True
+        Path(_midi).write_bytes(b"MThd")
+        return Path(_midi)
+
+    def _bp(_audio, _midi):
+        bp_called["ok"] = True
+        Path(_midi).write_bytes(b"MThd")
+        return Path(_midi)
+
+    monkeypatch.setattr(transcribe, "_transcribe_muscriptor", _boom)
+    monkeypatch.setattr(transcribe, "mt3_available", lambda: True)
+    monkeypatch.setattr(transcribe, "basic_pitch_available", lambda: True)
+    monkeypatch.setattr(transcribe, "_transcribe_mt3", _mt3)
+    monkeypatch.setattr(transcribe, "_transcribe_basic_pitch", _bp)
+
+    with pytest.raises(transcribe.TranscriptionError, match="MuScriptor 暂时不可用"):
+        transcribe.transcribe_to_midi(wav, out, model="muscriptor")
+    assert not mt3_called["ok"]
+    assert not bp_called["ok"]
+    assert not out.is_file()

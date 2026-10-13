@@ -10,6 +10,7 @@ class ScoreResultActions extends StatelessWidget {
     required this.onExport,
     this.includeAbc = false,
     this.includeRawMidi = false,
+    this.trackScoped = true,
   });
 
   final bool enabled;
@@ -19,8 +20,13 @@ class ScoreResultActions extends StatelessWidget {
   final bool includeAbc;
   final bool includeRawMidi;
 
+  /// When true, export labels mention「选中轨」(audio upload). Jianpu / listen
+  /// pass false for plain MusicXML / ABC / MIDI labels.
+  final bool trackScoped;
+
   @override
   Widget build(BuildContext context) {
+    final suffix = trackScoped ? '（选中轨）' : '';
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -37,17 +43,32 @@ class ScoreResultActions extends StatelessWidget {
           onSelected: onExport,
           enabled: enabled,
           itemBuilder: (context) => [
-            const PopupMenuItem(value: 'preview', child: Text('试听选中音轨')),
-            const PopupMenuItem(value: 'musicxml', child: Text('导出 MusicXML（选中轨）')),
-            const PopupMenuItem(value: 'midi', child: Text('导出 MIDI（选中轨）')),
+            PopupMenuItem(
+              value: 'preview',
+              child: Text(trackScoped ? '试听选中音轨' : '试听'),
+            ),
+            PopupMenuItem(
+              value: 'musicxml',
+              child: Text('导出 MusicXML$suffix'),
+            ),
+            PopupMenuItem(
+              value: 'midi',
+              child: Text('导出 MIDI$suffix'),
+            ),
             if (includeRawMidi)
               const PopupMenuItem(
                 value: 'midi_raw',
                 child: Text('导出原始 MIDI（全轨）'),
               ),
             if (includeAbc)
-              const PopupMenuItem(value: 'abc', child: Text('导出 ABC（选中轨）')),
-            const PopupMenuItem(value: 'pdf', child: Text('导出 / 分享 PDF（选中轨）')),
+              PopupMenuItem(
+                value: 'abc',
+                child: Text('导出 ABC$suffix'),
+              ),
+            PopupMenuItem(
+              value: 'pdf',
+              child: Text('导出 / 分享 PDF$suffix'),
+            ),
           ],
         ),
       ],

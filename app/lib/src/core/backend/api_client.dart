@@ -33,6 +33,23 @@ class JobStatus {
       );
 }
 
+/// How the backend engraves pitched tracks (MIDI2ScoreTransformer).
+enum ScoreMode {
+  /// Every non-drum track → its own piano grand-staff part.
+  perTrack('per_track', '逐轨'),
+
+  /// Only GM piano tracks via the model; other tracks via rules.
+  pianoOnly('piano_only', '仅钢琴'),
+
+  /// All non-drum tracks merged into one piano score (drums dropped).
+  reduceAll('reduce_all', '合并缩谱');
+
+  const ScoreMode(this.wire, this.label);
+
+  final String wire;
+  final String label;
+}
+
 /// One instrument / program track inside ``transcription_raw.mid``.
 class MidiTrackInfo {
   final int index;
@@ -150,6 +167,7 @@ class ApiClient {
     bool splitAudio = false,
     double splitSeconds = 30,
     String arrangement = 'full',
+    String? scoreMode,
   }) async {
     if (bytes.length > maxUploadBytes) {
       throw ApiException('文件超过 100MB 上限 (${bytes.length ~/ (1024 * 1024)}MB)');
@@ -162,6 +180,9 @@ class ApiClient {
       ..fields['split_seconds'] = splitSeconds.toString()
       ..fields['arrangement'] = arrangement
       ..files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
+    if (scoreMode != null && scoreMode.isNotEmpty) {
+      req.fields['score_mode'] = scoreMode;
+    }
     final streamed = await _http.send(req);
     final resp = await http.Response.fromStream(streamed);
     if (resp.statusCode != 200 && resp.statusCode != 201) {
@@ -204,6 +225,7 @@ class ApiClient {
     String? arrange,
     String? pianoStyle,
     String? pianoChords,
+    String? scoreMode,
   }) {
     final base = Uri.parse('$baseUrl/jobs/$id/$artifact');
     final params = <String, String>{};
@@ -219,6 +241,9 @@ class ApiClient {
     if (pianoChords != null && pianoChords.isNotEmpty) {
       params['piano_chords'] = pianoChords;
     }
+    if (scoreMode != null && scoreMode.isNotEmpty) {
+      params['score_mode'] = scoreMode;
+    }
     if (params.isEmpty) return base;
     return base.replace(queryParameters: params);
   }
@@ -231,12 +256,15 @@ class ApiClient {
     return JobTracks.fromJson(jsonDecode(resp.body) as Map<String, dynamic>);
   }
 
+  /// [scoreMode]: ``per_track`` | ``piano_only`` | ``reduce_all`` (see
+  /// [ScoreMode]); null → server default.
   Future<String> getMusicXml(
     String id, {
     List<String>? tracks,
     String? arrange,
     String? pianoStyle,
     String? pianoChords,
+    String? scoreMode,
   }) async {
     final resp = await _http.get(_jobArtifact(
       id,
@@ -245,9 +273,10 @@ class ApiClient {
       arrange: arrange,
       pianoStyle: pianoStyle,
       pianoChords: pianoChords,
+      scoreMode: scoreMode,
     ));
     if (resp.statusCode != 200) {
-      throw ApiException('获取结果失败 (${resp.statusCode}): ${resp.body}');
+      throw ApiException(_httpError('获取结果失败', resp.statusCode, resp.body));
     }
     return utf8.decode(resp.bodyBytes);
   }
@@ -255,12 +284,14 @@ class ApiClient {
   /// Download MIDI for [tracks] tokens (null/empty = full multi-track MIDI).
   /// Tokens: ``0``, ``m0`` (melody), ``c0`` (chords).
   /// Set [arrange] to ``piano`` for playable piano reduction.
+  /// [scoreMode] reshapes audition MIDI (仅钢琴 / 合并缩谱) to match the score.
   Future<List<int>> getMidi(
     String id, {
     List<String>? tracks,
     String? arrange,
     String? pianoStyle,
     String? pianoChords,
+    String? scoreMode,
   }) async {
     final resp = await _http.get(_jobArtifact(
       id,
@@ -269,9 +300,10 @@ class ApiClient {
       arrange: arrange,
       pianoStyle: pianoStyle,
       pianoChords: pianoChords,
+      scoreMode: scoreMode,
     ));
     if (resp.statusCode != 200) {
-      throw ApiException('获取 MIDI 失败 (${resp.statusCode}): ${resp.body}');
+      throw ApiException(_httpError('获取 MIDI 失败', resp.statusCode, resp.body));
     }
     return resp.bodyBytes;
   }
@@ -327,6 +359,19 @@ class ApiException implements Exception {
   ApiException(this.message);
   @override
   String toString() => message;
+}
+
+String _httpError(String prefix, int status, String body) {
+  String detail = body.trim();
+  try {
+    final decoded = jsonDecode(body);
+    if (decoded is Map && decoded['detail'] != null) {
+      final d = decoded['detail'];
+      detail = d is String ? d : d.toString();
+    }
+  } catch (_) {}
+  if (detail.isEmpty) return '$prefix ($status)';
+  return '$prefix ($status): $detail';
 }
 
 /// Default backend endpoint.

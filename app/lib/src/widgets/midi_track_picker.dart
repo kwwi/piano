@@ -17,6 +17,8 @@ class MidiTrackPicker extends StatelessWidget {
     this.confirming = false,
     this.arrangePiano = false,
     this.onArrangePianoChanged,
+    this.scoreMode = ScoreMode.perTrack,
+    this.onScoreModeChanged,
   });
 
   final List<MidiTrackInfo> tracks;
@@ -29,6 +31,17 @@ class MidiTrackPicker extends StatelessWidget {
   final bool confirming;
   final bool arrangePiano;
   final ValueChanged<bool>? onArrangePianoChanged;
+  final ScoreMode scoreMode;
+  final ValueChanged<ScoreMode>? onScoreModeChanged;
+
+  static String _scoreModeHint(ScoreMode mode) => switch (mode) {
+        ScoreMode.perTrack =>
+          '每个非鼓音轨各自生成大谱表；试听按勾选的多轨播放。',
+        ScoreMode.pianoOnly =>
+          '仅钢琴类音轨用模型排谱；确认后试听只播放钢琴类音轨。',
+        ScoreMode.reduceAll =>
+          '所有非鼓音轨合并成一份钢琴谱；确认后试听播放合并后的钢琴 MIDI。',
+      };
 
   static String sourceToken(int index) => '$index';
   static String melodyToken(int index) => 'm$index';
@@ -103,6 +116,35 @@ class MidiTrackPicker extends StatelessWidget {
                 onChanged: enabled && !confirming ? onArrangePianoChanged : null,
               ),
             ],
+            if (onScoreModeChanged != null && !arrangePiano) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Text('谱面生成', style: theme.textTheme.bodyMedium),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SegmentedButton<ScoreMode>(
+                      showSelectedIcon: false,
+                      segments: [
+                        for (final m in ScoreMode.values)
+                          ButtonSegment(value: m, label: Text(m.label)),
+                      ],
+                      selected: {scoreMode},
+                      onSelectionChanged: enabled && !confirming
+                          ? (s) => onScoreModeChanged!(s.first)
+                          : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _scoreModeHint(scoreMode),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
             const SizedBox(height: 8),
             ConstrainedBox(
               constraints: const BoxConstraints(maxHeight: 280),
@@ -116,6 +158,7 @@ class MidiTrackPicker extends StatelessWidget {
                   final mel = melodyToken(t.index);
                   final ch = chordsToken(t.index);
                   final drum = t.isDrum;
+                  final canDerive = !drum && t.noteCount > 0;
                   return Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -156,10 +199,12 @@ class MidiTrackPicker extends StatelessWidget {
                               selected: selected.contains(mel),
                               showCheckmark: true,
                               label: const Text('主调'),
-                              tooltip: drum
-                                  ? '鼓轨也可提取最高音线（效果有限）'
+                              tooltip: !canDerive
+                                  ? (drum
+                                      ? '鼓轨无法提取主调'
+                                      : '该轨没有音符，无法提取主调')
                                   : '从该轨提取主旋律（skyline）',
-                              onSelected: enabled && !confirming
+                              onSelected: enabled && !confirming && canDerive
                                   ? (v) => onToggleToken(mel, v)
                                   : null,
                             ),
@@ -167,10 +212,12 @@ class MidiTrackPicker extends StatelessWidget {
                               selected: selected.contains(ch),
                               showCheckmark: true,
                               label: const Text('和弦'),
-                              tooltip: drum
-                                  ? '鼓轨通常无明显和弦'
+                              tooltip: !canDerive
+                                  ? (drum
+                                      ? '鼓轨无法提取和弦'
+                                      : '该轨没有音符，无法提取和弦')
                                   : '从该轨估计和弦垫音',
-                              onSelected: enabled && !confirming
+                              onSelected: enabled && !confirming && canDerive
                                   ? (v) => onToggleToken(ch, v)
                                   : null,
                             ),

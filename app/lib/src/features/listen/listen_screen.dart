@@ -173,6 +173,9 @@ class _ListenScreenState extends ConsumerState<ListenScreen> {
         case 'musicxml':
           final where = await export.saveMusicXml(score);
           messenger.showSnackBar(SnackBar(content: Text('已导出 MusicXML：$where')));
+        case 'abc':
+          final where = await export.saveAbc(score, name: 'listen');
+          messenger.showSnackBar(SnackBar(content: Text('已导出 ABC：$where')));
         case 'midi':
           final where = await export.saveMidi(score);
           messenger.showSnackBar(SnackBar(content: Text('已导出 MIDI：$where')));
@@ -217,6 +220,8 @@ class _ListenScreenState extends ConsumerState<ListenScreen> {
             playing: _previewPlaying,
             onPreview: _togglePreview,
             onExport: _export,
+            includeAbc: true,
+            trackScoped: false,
           ),
         ],
       ),

@@ -37,6 +37,7 @@ def _run(
     split_audio: bool = False,
     split_seconds: float | None = None,
     arrangement: str | None = None,
+    score_mode: str | None = None,
 ) -> None:
     short = job_id[:8]
     log.info(
@@ -68,6 +69,7 @@ def _run(
             split_audio=split_audio,
             split_seconds=split_seconds,
             arrangement=arrangement,
+            score_mode=score_mode,
             allow_separation_passthrough=True,
             on_progress=progress,
         )
@@ -94,6 +96,7 @@ def submit(
     split_audio: bool = False,
     split_seconds: float | None = None,
     arrangement: str | None = None,
+    score_mode: str | None = None,
 ) -> None:
     """Enqueue a job for execution."""
     model = model or DEFAULT_MODEL
@@ -110,6 +113,7 @@ def submit(
             split_audio,
             split_seconds,
             arrangement,
+            score_mode,
         )
     else:
         _executor.submit(
@@ -122,4 +126,5 @@ def submit(
             split_audio=split_audio,
             split_seconds=split_seconds,
             arrangement=arrangement,
+            score_mode=score_mode,
         )

@@ -109,15 +109,45 @@ def ensure_track_melody(job_dir: Path, source_index: int) -> Path:
     return out
 
 
+def _empty_part_midi(out: Path, **_kwargs) -> Path:
+    """Mark a derived part as empty (pretty_midi drops note-less instruments).
+
+    The file is a zero-byte sentinel; ``assemble_selection_midi`` skips it.
+    """
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(b"")
+    return out
+
+
+def _is_empty_derived_midi(path: Path) -> bool:
+    return (not path.is_file()) or path.stat().st_size == 0
+
+
+def _source_has_pitched_notes(midi_path: Path) -> bool:
+    try:
+        import pretty_midi
+    except Exception:
+        return False
+    pm = pretty_midi.PrettyMIDI(str(midi_path))
+    return any((not inst.is_drum) and inst.notes for inst in pm.instruments)
+
+
 def ensure_track_chords(job_dir: Path, source_index: int) -> Path:
-    """Chord-pad MIDI estimated from one source instrument (cached)."""
+    """Chord-pad MIDI estimated from one source instrument (cached).
+
+    Empty / drum-only sources write an empty Chords part instead of failing the
+    whole selection (user can still confirm other tracks).
+    """
     from .lead_sheet import LeadSheetError, build_lead_sheet
+    from ..logging_zh import get_logger
 
     try:
         import pretty_midi
     except Exception as exc:  # pragma: no cover
         raise TrackError("pretty_midi is required") from exc
 
+    log = get_logger("piano.tracks")
     job_dir = Path(job_dir)
     out = derived_dir(job_dir) / f"track_{source_index:02d}_chords.mid"
     if out.is_file():
@@ -126,6 +156,12 @@ def ensure_track_chords(job_dir: Path, source_index: int) -> Path:
     subset = derived_dir(job_dir) / f"track_{source_index:02d}_src.mid"
     if not subset.is_file():
         write_track_subset(score, subset, [source_index])
+
+    label = f"Track{source_index} Chords"
+    if not _source_has_pitched_notes(subset):
+        log.warning("轨 %d 无可用音高音符，跳过和弦提取", source_index)
+        return _empty_part_midi(out, name=label)
+
     lead = derived_dir(job_dir) / f"track_{source_index:02d}_lead_tmp.mid"
     chords_json = derived_dir(job_dir) / f"track_{source_index:02d}_chords.json"
     try:
@@ -136,7 +172,8 @@ def ensure_track_chords(job_dir: Path, source_index: int) -> Path:
             exclude_melody_pcs=False,
         )
     except LeadSheetError as exc:
-        raise TrackError(f"chord extract failed for track {source_index}: {exc}") from exc
+        log.warning("轨 %d 和弦提取失败（%s），写入空和弦轨", source_index, exc)
+        return _empty_part_midi(out, name=label)
 
     pm = pretty_midi.PrettyMIDI(str(lead))
     tempo = 120.0
@@ -152,7 +189,7 @@ def ensure_track_chords(job_dir: Path, source_index: int) -> Path:
             clone = pretty_midi.Instrument(
                 program=inst.program,
                 is_drum=False,
-                name=f"Track{source_index} Chords",
+                name=label,
             )
             for n in inst.notes:
                 clone.notes.append(
@@ -165,8 +202,9 @@ def ensure_track_chords(job_dir: Path, source_index: int) -> Path:
                 )
             out_pm.instruments.append(clone)
             break
-    if not out_pm.instruments:
-        raise TrackError(f"no chords produced for track {source_index}")
+    if not out_pm.instruments or not out_pm.instruments[0].notes:
+        log.warning("轨 %d 未产出和弦音符，写入空和弦轨", source_index)
+        return _empty_part_midi(out, name=label)
     out_pm.write(str(out))
     try:
         lead.unlink(missing_ok=True)
@@ -203,8 +241,13 @@ def assemble_selection_midi(
     out = pretty_midi.PrettyMIDI(initial_tempo=tempo)
 
     def _append_from(path: Path, *, rename: str | None = None) -> None:
+        if _is_empty_derived_midi(path):
+            return
         pm = pretty_midi.PrettyMIDI(str(path))
         for inst in pm.instruments:
+            if not inst.notes:
+                # Empty derived 主调/和弦 (e.g. drum / silent source) — skip.
+                continue
             name = rename or (inst.name or "").strip() or "Part"
             clone = pretty_midi.Instrument(
                 program=inst.program,
@@ -259,6 +302,8 @@ def assemble_selection_midi(
         _append_from(ch, rename=label)
 
     if not out.instruments:
-        raise TrackError("selection produced empty MIDI")
+        raise TrackError(
+            "选中内容无法生成 MIDI（主调/和弦源轨没有可用音符，请改选其他音轨）"
+        )
     out.write(str(out_midi))
     return out_midi

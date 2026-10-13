@@ -75,3 +75,29 @@ def test_assemble_selection(tmp_path: Path):
     names = [i.name for i in pm.instruments]
     assert any("Melody" in n for n in names)
     assert any("Chords" in n for n in names)
+
+
+def test_chords_on_empty_or_drum_track_does_not_crash(tmp_path: Path):
+    job = tmp_path / "job"
+    job.mkdir()
+    pm = pretty_midi.PrettyMIDI(initial_tempo=120)
+    piano = pretty_midi.Instrument(program=0, name="Piano")
+    piano.notes.append(pretty_midi.Note(90, 60, 0.0, 0.5))
+    drums = pretty_midi.Instrument(program=0, is_drum=True, name="Drums")
+    drums.notes.append(pretty_midi.Note(100, 36, 0.0, 0.1))
+    pm.instruments.extend([piano, drums])
+    mid = job / "transcription.mid"
+    pm.write(str(mid))
+    (job / "transcription_raw.mid").write_bytes(mid.read_bytes())
+
+    # Drum chord derive writes an empty sentinel instead of 400.
+    ch_drum = ensure_track_chords(job, 1)
+    assert ch_drum.is_file()
+    assert ch_drum.stat().st_size == 0
+
+    sel = parse_track_selection("0,c1", track_count=2)
+    out = assemble_selection_midi(job, sel, job / "exports" / "mix.mid")
+    mixed = pretty_midi.PrettyMIDI(str(out))
+    # Empty chord part is skipped; piano source remains.
+    assert len(mixed.instruments) == 1
+    assert mixed.instruments[0].name == "Piano"

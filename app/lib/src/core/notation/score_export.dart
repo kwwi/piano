@@ -61,6 +61,11 @@ class ScoreExport {
     );
   }
 
+  /// Build ABC from a jianpu IR score, then save.
+  Future<String> saveAbc(JianpuScore score, {String name = 'score'}) {
+    return saveAbcText(const AbcBuilder().build(score), name: name);
+  }
+
   /// Build a PDF from one or more engraved Verovio SVG pages.
   Future<Uint8List> pdfFromSvgs(List<String> svgs) async {
     if (svgs.isEmpty) {

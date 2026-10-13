@@ -23,7 +23,7 @@ def test_extract_audio_from_wav(sine_wav, tmp_path):
     not (ffmpeg_available() and basic_pitch_available()),
     reason="requires ffmpeg + basic-pitch",
 )
-def test_full_pipeline_produces_musicxml(sine_wav, tmp_path):
+def test_full_pipeline_produces_musicxml(sine_wav, tmp_path, fake_m2s):
     work = tmp_path / "work"
     xml = run_pipeline(
         sine_wav,

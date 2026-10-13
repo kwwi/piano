@@ -102,17 +102,9 @@ def _transcribe_one(audio_path: Path, out_midi: Path, model: str) -> Path:
         try:
             return _transcribe_muscriptor(audio_path, out_midi)
         except Exception as exc:
-            # Prefer MT3 as multi-instrument fallback, then Basic Pitch.
-            if mt3_available():
-                log.warning("MuScriptor 不可用，回退 MT3：%s", exc)
-                try:
-                    return _transcribe_mt3(audio_path, out_midi)
-                except Exception as exc2:
-                    log.warning("MT3 回退也失败：%s", exc2)
-            if basic_pitch_available():
-                log.warning("回退 Basic Pitch：%s", exc)
-                return _transcribe_basic_pitch(audio_path, out_midi)
-            raise
+            # No MT3 / Basic Pitch fallback — surface a clear error to the client.
+            log.error("MuScriptor 不可用：%s", exc)
+            raise TranscriptionError("MuScriptor 暂时不可用") from exc
 
     if model == "crepe":
         try:

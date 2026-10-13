@@ -16,6 +16,17 @@ def test_health():
     body = r.json()
     assert body["status"] == "ok"
     assert body["max_upload_bytes"] == 100 * 1024 * 1024
+    assert "m2s_ready" in body
+    assert body["score_mode_default"] in ("per_track", "piano_only", "reduce_all")
+
+
+def test_invalid_score_mode_rejected():
+    r = client.post(
+        "/jobs",
+        files={"file": ("tone.wav", b"RIFF0000", "audio/wav")},
+        data={"score_mode": "bogus"},
+    )
+    assert r.status_code == 400
 
 
 def test_empty_upload_rejected():
@@ -31,7 +42,7 @@ def test_unknown_job_404():
     assert client.get("/jobs/does-not-exist").status_code == 404
 
 
-def test_job_lifecycle(sine_wav):
+def test_job_lifecycle(sine_wav, fake_m2s):
     with open(sine_wav, "rb") as f:
         payload = f.read()
     r = client.post(

@@ -48,6 +48,8 @@ def _on_startup() -> None:
         mt3_available,
     )
 
+    from .pipeline.score_m2s.client import config_problems
+
     log.info(
         "后端已启动（OpenCV=%s, jianpu-ly=%s, mt3-infer=%s, basic_pitch=%s, crepe=%s）",
         opencv_available(),
@@ -56,6 +58,19 @@ def _on_startup() -> None:
         basic_pitch_available(),
         crepe_available(),
     )
+    m2s_problems = config_problems()
+    if m2s_problems:
+        log.warning(
+            "MIDI2ScoreTransformer 未就绪，MusicXML 生成将失败（运行 m2s_worker/setup_m2s.sh）：%s",
+            "；".join(m2s_problems),
+        )
+
+
+@app.on_event("shutdown")
+def _on_shutdown() -> None:
+    from .pipeline.score_m2s.client import set_client
+
+    set_client(None)
 
 
 @app.get("/")
@@ -66,9 +81,11 @@ def health() -> dict:
         MT3_INFER_MODEL,
         PIANO_ARRANGER_BACKEND,
         PIANO_ARRANGER_STYLE,
+        SCORE_MODE_DEFAULT,
     )
     from .pipeline.jianpu_ly_export import jianpu_ly_available
     from .pipeline.omr_cv import opencv_available
+    from .pipeline.score_m2s.client import status as m2s_status
     from .pipeline.transcribe import (
         basic_pitch_available,
         crepe_available,
@@ -88,6 +105,8 @@ def health() -> dict:
         "crepe": crepe_available(),
         "piano_arranger_backend": PIANO_ARRANGER_BACKEND,
         "piano_arranger_style": PIANO_ARRANGER_STYLE,
+        "score_mode_default": SCORE_MODE_DEFAULT,
+        **m2s_status(),
     }
 
 
@@ -136,7 +155,9 @@ async def create_job(
     split_audio: bool | None = Form(None),
     split_seconds: float | None = Form(None),
     arrangement: str | None = Form(None),  # ignored; always multi-track
+    score_mode: str | None = Form(None),
 ) -> JobCreated:
+    mode = _parse_score_mode(score_mode)
     job_id = uuid.uuid4().hex
     job_dir = store.job_dir(job_id)
     dest = job_dir / (file.filename or "upload.bin")
@@ -194,6 +215,7 @@ async def create_job(
         split_audio=do_split,
         split_seconds=chunk_sec,
         arrangement="full",
+        score_mode=mode,
     )
     return JobCreated(job_id=job_id, status=JobState.queued)
 
@@ -266,13 +288,17 @@ def _subset_midi_bytes(
     arrange: str | None = None,
     piano_style: str | None = None,
     piano_chords: str | None = None,
+    score_mode: str | None = None,
 ) -> tuple[bytes, str | None]:
     """Return MIDI bytes for optional track filter / piano arrangement.
 
     ``cache_key`` is ``None`` when returning the full score MIDI unchanged.
     ``tracks`` may mix source indices with derived tokens ``mN`` / ``cN``.
     ``arrange=piano`` runs lead→piano arranger→RH/LH postprocess.
+    ``score_mode`` reshapes audition MIDI to match 仅钢琴 / 合并缩谱 (ignored when
+    ``arrange=piano``, which is already a single piano reduction).
     """
+    from .pipeline.score_m2s import ScoreRouteError, reshape_midi_for_score_mode
     from .pipeline.track_derive import (
         assemble_selection_midi,
         parse_track_selection,
@@ -287,6 +313,7 @@ def _subset_midi_bytes(
     except TrackError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    mode = _parse_score_mode(score_mode)
     arrange_mode = _parse_arrange(arrange)
     if arrange_mode == "piano":
         from .config import PIANO_ARRANGER_AUTO_CHORDS, PIANO_ARRANGER_STYLE
@@ -321,14 +348,29 @@ def _subset_midi_bytes(
         return cache.read_bytes(), cache_key
 
     if selection is None:
-        return score.read_bytes(), None
+        base_mid = score
+        base_key = "all"
+    else:
+        base_key = selection.cache_key
+        base_mid = job_dir / "exports" / f"sel_{base_key}.mid"
+        if not base_mid.is_file():
+            try:
+                assemble_selection_midi(job_dir, selection, base_mid)
+            except TrackError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    cache_key = selection.cache_key
+    if mode == "per_track":
+        if selection is None:
+            return base_mid.read_bytes(), None
+        return base_mid.read_bytes(), base_key
+
+    # Audition / MIDI export shaped like the engraved score for this mode.
+    cache_key = f"{base_key}_{mode}"
     cache = job_dir / "exports" / f"sel_{cache_key}.mid"
     if not cache.is_file():
         try:
-            assemble_selection_midi(job_dir, selection, cache)
-        except TrackError as exc:
+            reshape_midi_for_score_mode(base_mid, cache, score_mode=mode)
+        except ScoreRouteError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     return cache.read_bytes(), cache_key
 
@@ -391,57 +433,51 @@ def job_musicxml(
     piano_chords: str | None = Query(
         None, description="auto | off — auto-estimate chords when unset"
     ),
+    score_mode: str | None = Query(
+        None,
+        description="per_track | piano_only | reduce_all (default SCORE_MODE_DEFAULT)",
+    ),
 ):
     job = _require_done_job(job_id)
     arrange_mode = _parse_arrange(arrange)
 
-    if arrange_mode == "piano":
-        from .pipeline.arrange_piano.to_grand_staff import piano_midi_to_musicxml
+    from .pipeline.score_m2s import build_score_xml_from_midi, mode_supports_part_filter
+    from .pipeline.track_derive import parse_track_selection
+    from .pipeline.tracks import TrackError, filter_musicxml_by_part_indices
 
-        job_dir = store.job_dir(job_id)
-        midi_bytes, cache_key = _subset_midi_bytes(
+    mode = _parse_score_mode(score_mode)
+    job_dir = store.job_dir(job_id)
+    exports = job_dir / "exports"
+    parts_cache = job_dir / "score_parts"
+
+    def _respond(path: Path, filename: str = "score.musicxml") -> FileResponse:
+        return FileResponse(
+            path=str(path),
+            media_type="application/vnd.recordare.musicxml+xml",
+            filename=filename,
+        )
+
+    if arrange_mode == "piano":
+        _, cache_key = _subset_midi_bytes(
             job_id,
             tracks,
             arrange=arrange,
             piano_style=piano_style,
             piano_chords=piano_chords,
         )
-        xml_path = job_dir / "exports" / f"{cache_key or 'piano'}_gs.musicxml"
+        piano_mid = exports / f"{cache_key}.mid"
+        xml_path = exports / f"{cache_key}_m2s.musicxml"
         if not xml_path.is_file():
-            import tempfile
+            with _score_errors():
+                build_score_xml_from_midi(
+                    piano_mid,
+                    xml_path,
+                    score_mode=mode,
+                    arranged_piano=True,
+                    cache_dir=parts_cache,
+                )
+        return _respond(xml_path, "piano.musicxml")
 
-            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                tmp.write(midi_bytes)
-                tmp_path = Path(tmp.name)
-            try:
-                piano_midi_to_musicxml(tmp_path, xml_path)
-            except Exception as exc:
-                tmp_path.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            tmp_path.unlink(missing_ok=True)
-        return FileResponse(
-            path=str(xml_path),
-            media_type="application/vnd.recordare.musicxml+xml",
-            filename="piano.musicxml",
-        )
-
-    if tracks is None or not tracks.strip():
-        if job.result_path is None:
-            raise HTTPException(status_code=409, detail="Result not ready")
-        return FileResponse(
-            path=str(job.result_path),
-            media_type="application/vnd.recordare.musicxml+xml",
-            filename="score.musicxml",
-        )
-
-    from .pipeline.track_derive import parse_track_selection
-    from .pipeline.tracks import (
-        TrackError,
-        filter_musicxml_by_part_indices,
-        resolve_full_musicxml,
-    )
-
-    job_dir = store.job_dir(job_id)
     try:
         track_count = _job_track_count(job_id)
         selection = parse_track_selection(tracks, track_count=track_count)
@@ -449,55 +485,80 @@ def job_musicxml(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if selection is None:
-        if job.result_path is None:
-            raise HTTPException(status_code=409, detail="Result not ready")
-        return FileResponse(
-            path=str(job.result_path),
-            media_type="application/vnd.recordare.musicxml+xml",
-            filename="score.musicxml",
-        )
+        return _respond(_full_score_xml(job, mode))
 
-    cache_key = selection.cache_key
-    xml_path = job_dir / "exports" / f"sel_{cache_key}.musicxml"
+    xml_path = exports / f"sel_{selection.cache_key}_{mode}.musicxml"
     if not xml_path.is_file():
-        use_filter = (
-            not selection.has_derived
-            and bool(selection.sources)
-        )
         wrote = False
-        if use_filter:
-            full_xml = resolve_full_musicxml(job_dir)
-            if full_xml is None and job.result_path is not None:
-                p = Path(job.result_path)
-                full_xml = p if p.is_file() else None
-            if full_xml is not None:
-                try:
-                    filter_musicxml_by_part_indices(
-                        full_xml, xml_path, selection.sources
-                    )
-                    wrote = True
-                except TrackError:
-                    wrote = False
-        if not wrote:
-            import tempfile
-
-            from .pipeline.to_musicxml import midi_to_musicxml
-
-            midi_bytes, _ = _subset_midi_bytes(job_id, tracks)
-            with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as tmp:
-                tmp.write(midi_bytes)
-                tmp_path = Path(tmp.name)
+        if (
+            mode_supports_part_filter(mode)
+            and not selection.has_derived
+            and selection.sources
+        ):
+            full_xml = _full_score_xml(job, mode)
             try:
-                midi_to_musicxml(tmp_path, xml_path)
-            except Exception as exc:
-                tmp_path.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            tmp_path.unlink(missing_ok=True)
-    return FileResponse(
-        path=str(xml_path),
-        media_type="application/vnd.recordare.musicxml+xml",
-        filename="score.musicxml",
-    )
+                filter_musicxml_by_part_indices(full_xml, xml_path, selection.sources)
+                wrote = True
+            except TrackError:
+                wrote = False
+        if not wrote:
+            _, sel_key = _subset_midi_bytes(job_id, tracks)
+            sel_mid = exports / f"sel_{sel_key}.mid"
+            with _score_errors():
+                build_score_xml_from_midi(
+                    sel_mid, xml_path, score_mode=mode, cache_dir=parts_cache
+                )
+    return _respond(xml_path)
+
+
+def _parse_score_mode(score_mode: str | None) -> str:
+    from .pipeline.score_m2s import ScoreRouteError, normalize_score_mode
+
+    try:
+        return normalize_score_mode(score_mode)
+    except ScoreRouteError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+class _score_errors:
+    """Map score-pipeline failures to HTTP errors (M2S missing → 503)."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc is None or isinstance(exc, HTTPException):
+            return False
+        from .pipeline.score_m2s import M2SError
+
+        if isinstance(exc, M2SError):
+            log.error("M2S 转谱失败：%s", exc)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _full_score_xml(job, mode: str) -> Path:
+    """Whole-job MusicXML for ``mode`` (pipeline result when it used that mode)."""
+    from .pipeline.orchestrator import read_score_mode
+    from .pipeline.score_m2s import build_score_xml_from_midi
+    from .pipeline.tracks import TrackError, resolve_score_midi
+
+    job_dir = store.job_dir(job.id)
+    if job.result_path is not None and read_score_mode(job_dir) == mode:
+        result = Path(job.result_path)
+        if result.is_file():
+            return result
+    xml_path = job_dir / "exports" / f"full_{mode}.musicxml"
+    if not xml_path.is_file():
+        try:
+            midi = resolve_score_midi(job_dir)
+        except TrackError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        with _score_errors():
+            build_score_xml_from_midi(
+                midi, xml_path, score_mode=mode, cache_dir=job_dir / "score_parts"
+            )
+    return xml_path
 
 
 @app.get("/jobs/{job_id}/midi")
@@ -513,6 +574,10 @@ def job_midi(
     ),
     piano_style: str | None = Query(None, description="pop | ballad | drive"),
     piano_chords: str | None = Query(None, description="auto | off"),
+    score_mode: str | None = Query(
+        None,
+        description="per_track | piano_only | reduce_all — reshape audition MIDI",
+    ),
 ):
     """MIDI for selected source / derived parts (default: full transcription)."""
     _require_done_job(job_id)
@@ -522,6 +587,7 @@ def job_midi(
         arrange=arrange,
         piano_style=piano_style,
         piano_chords=piano_chords,
+        score_mode=score_mode,
     )
     if cache_key is None:
         name = "transcription.mid"

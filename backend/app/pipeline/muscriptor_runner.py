@@ -107,7 +107,8 @@ def _quantize_midi_bytes(midi_bytes: bytes) -> bytes:
     """Snap note onsets/durations to a readable grid (music21).
 
     Used when MuScriptor 0.3.x has no native ``quantize=`` flag, so sheet-music
-    conversion (MuseScore / music21) sees cleaner timing.
+    conversion sees cleaner timing. Off by default: MIDI2ScoreTransformer
+    expects unquantized performance timing.
     """
     import tempfile
 

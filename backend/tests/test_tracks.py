@@ -13,7 +13,7 @@ from app.pipeline.tracks import (
     write_tracks_manifest,
 )
 from app.pipeline.to_abc import midi_to_abc
-from app.pipeline.to_musicxml import midi_to_musicxml
+from app.pipeline.to_musicxml import midi_to_musicxml_rule as midi_to_musicxml
 
 
 def _multi_track_midi(path: Path) -> Path:

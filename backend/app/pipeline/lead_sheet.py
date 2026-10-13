@@ -160,11 +160,11 @@ def write_lead_sheet_musicxml(
 ) -> Path:
     """MusicXML from lead-sheet MIDI, injecting ChordSymbol harmonies when possible."""
     from .melody import _estimate_tempo
-    from .to_musicxml import midi_to_musicxml
+    from .to_musicxml import midi_to_musicxml_rule
 
     lead_midi = Path(lead_midi)
     out_xml = Path(out_xml)
-    midi_to_musicxml(lead_midi, out_xml, quantize=True, infer_key=True)
+    midi_to_musicxml_rule(lead_midi, out_xml, quantize=True, infer_key=True)
 
     events: list[dict] = []
     if chords_json is not None and Path(chords_json).is_file():

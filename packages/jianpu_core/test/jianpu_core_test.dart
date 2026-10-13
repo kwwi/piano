@@ -121,6 +121,39 @@ title: Twinkle
     });
   });
 
+  group('AbcBuilder', () {
+    const abc = AbcBuilder();
+
+    test('emits headers and notes for Twinkle', () {
+      final score = parser.parse('''
+key: 1=C
+time: 4/4
+tempo: 120
+title: Twinkle
+---
+1 1 5 5 | 6 6 5 - | 4 4 3 3 | 2 2 1 -
+''');
+      final text = abc.build(score);
+      expect(text, contains('X:1'));
+      expect(text, contains('T:Twinkle'));
+      expect(text, contains('M:4/4'));
+      expect(text, contains('L:1/4'));
+      expect(text, contains('Q:1/4=120'));
+      expect(text, contains('K:C'));
+      expect(text, contains('C C G G'));
+      expect(text, contains('A A G2'));
+      expect(text, contains('|'));
+    });
+
+    test('rests and octaves', () {
+      final score = parser.parse("0 1' 1,");
+      final text = abc.build(score);
+      expect(text, contains('z'));
+      expect(text, contains('c')); // C5
+      expect(text, contains('C,')); // C3
+    });
+  });
+
   group('MusicXmlBuilder', () {
     test('produces a valid-looking partwise document', () {
       final score = parser.parse('key: 1=C\ntime: 4/4\n---\n1 2 3 4 | 5 - - -');

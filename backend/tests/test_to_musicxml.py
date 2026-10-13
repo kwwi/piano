@@ -1,4 +1,4 @@
-"""Tests for MIDI → MusicXML (music21 + optional MuseScore CLI)."""
+"""Tests for rule-based MIDI → MusicXML (music21)."""
 from pathlib import Path
 
 import pretty_midi
@@ -22,7 +22,7 @@ def _c_major_scale_midi(path: Path) -> Path:
 
 def test_midi_to_musicxml_produces_notes(tmp_path):
     midi = _c_major_scale_midi(tmp_path / "scale.mid")
-    out = to_musicxml.midi_to_musicxml(midi, tmp_path / "scale.musicxml")
+    out = to_musicxml.midi_to_musicxml_rule(midi, tmp_path / "scale.musicxml")
     text = out.read_text(encoding="utf-8")
     assert "<score-partwise" in text
     assert "<pitch>" in text
@@ -32,63 +32,11 @@ def test_midi_to_musicxml_produces_notes(tmp_path):
 
 def test_key_inference_runs(tmp_path):
     midi = _c_major_scale_midi(tmp_path / "scale2.mid")
-    out = to_musicxml.midi_to_musicxml(
-        midi, tmp_path / "scale2.musicxml", infer_key=True, prefer_musescore=False
+    out = to_musicxml.midi_to_musicxml_rule(
+        midi, tmp_path / "scale2.musicxml", infer_key=True
     )
     text = out.read_text(encoding="utf-8")
     assert "<key>" in text
-
-
-def test_musescore_cli_preferred(tmp_path, monkeypatch):
-    midi = _c_major_scale_midi(tmp_path / "scale.mid")
-    fake_bin = tmp_path / "mscore"
-    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-    fake_bin.chmod(0o755)
-
-    def _fake_cli(midi_path, out_xml, bin_path):
-        assert bin_path == fake_bin
-        out_xml.write_text(
-            '<?xml version="1.0"?><score-partwise version="3.1">'
-            "<part-list><score-part id=\"P1\">"
-            "<part-name>Piano</part-name></score-part></part-list>"
-            '<part id="P1"><measure number="1">'
-            "<note><pitch><step>C</step><octave>4</octave></pitch>"
-            "<duration>1</duration><type>quarter</type></note>"
-            "</measure></part></score-partwise>",
-            encoding="utf-8",
-        )
-        return out_xml
-
-    monkeypatch.setattr(to_musicxml, "find_musescore_bin", lambda: fake_bin)
-    monkeypatch.setattr(to_musicxml, "_midi_to_musicxml_musescore", _fake_cli)
-    out = to_musicxml.midi_to_musicxml(midi, tmp_path / "via_ms.musicxml")
-    assert "<score-partwise" in out.read_text(encoding="utf-8")
-    assert "Piano" in out.read_text(encoding="utf-8")
-
-
-def test_musescore_failure_falls_back_to_music21(tmp_path, monkeypatch):
-    midi = _c_major_scale_midi(tmp_path / "scale.mid")
-    fake_bin = tmp_path / "mscore"
-    fake_bin.write_text("#!/bin/sh\n", encoding="utf-8")
-    fake_bin.chmod(0o755)
-
-    def _boom(*_a, **_k):
-        raise to_musicxml.MusicXmlError("mscore exploded")
-
-    monkeypatch.setattr(to_musicxml, "find_musescore_bin", lambda: fake_bin)
-    monkeypatch.setattr(to_musicxml, "_midi_to_musicxml_musescore", _boom)
-    out = to_musicxml.midi_to_musicxml(midi, tmp_path / "fallback.musicxml")
-    text = out.read_text(encoding="utf-8")
-    assert "<score-partwise" in text
-    assert text.count("<note") >= 8
-
-
-def test_find_musescore_respects_env(tmp_path, monkeypatch):
-    fake = tmp_path / "custom-mscore"
-    fake.write_text("#!/bin/sh\n", encoding="utf-8")
-    fake.chmod(0o755)
-    monkeypatch.setenv("MUSESCORE_PATH", str(fake))
-    assert to_musicxml.find_musescore_bin() == fake
 
 
 def test_drum_kit_midi_exports_musicxml(tmp_path):
@@ -106,9 +54,7 @@ def test_drum_kit_midi_exports_musicxml(tmp_path):
     mid = tmp_path / "kit.mid"
     pm.write(str(mid))
 
-    out = to_musicxml.midi_to_musicxml(
-        mid, tmp_path / "kit.musicxml", prefer_musescore=False
-    )
+    out = to_musicxml.midi_to_musicxml_rule(mid, tmp_path / "kit.musicxml")
     text = out.read_text(encoding="utf-8")
     assert "<score-partwise" in text
     assert text.count("<note") >= 8

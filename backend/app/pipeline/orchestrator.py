@@ -15,6 +15,7 @@ from typing import Callable
 from ..config import (
     DEMUCS_MODEL,
     DEFAULT_MODEL,
+    SCORE_MODE_DEFAULT,
     SPLIT_OVERLAP_SECONDS,
     SPLIT_SECONDS_DEFAULT,
     VIDEO_EXTENSIONS,
@@ -23,7 +24,7 @@ from ..logging_zh import get_logger
 from .extract import extract_audio
 from .separate import separate_for_melody
 from .to_abc import midi_to_abc
-from .to_musicxml import midi_to_musicxml
+from .score_m2s import build_score_xml_from_midi, normalize_score_mode
 from .to_pdf import PdfError, musicxml_to_pdf
 from .tracks import annotate_instrument_names, write_per_track_midis, write_tracks_manifest
 from .transcribe import transcribe_to_midi
@@ -47,6 +48,7 @@ def run_pipeline(
     split_audio: bool = False,
     split_seconds: float | None = None,
     arrangement: str | None = None,  # kept for API compat; always multi-track
+    score_mode: str | None = None,
     on_progress: ProgressCB | None = None,
 ) -> Path:
     """Run the full pipeline and return the path to the resulting MusicXML.
@@ -57,6 +59,7 @@ def run_pipeline(
     """
     cb = on_progress or _noop
     model = (model or DEFAULT_MODEL).strip().lower()
+    score_mode = normalize_score_mode(score_mode or SCORE_MODE_DEFAULT)
     chunk_sec = float(split_seconds if split_seconds is not None else SPLIT_SECONDS_DEFAULT)
     if arrangement and arrangement.strip().lower() not in {"", "full"}:
         log.info(
@@ -166,9 +169,15 @@ def run_pipeline(
     title = input_path.stem or "Transcription"
 
     cb("musicxml", 0.82)
-    log.info("⑤ 生成 MusicXML（多轨）…")
+    log.info("⑤ 生成 MusicXML（MIDI2ScoreTransformer，方式=%s）…", score_mode)
     xml = workdir / "score.musicxml"
-    midi_to_musicxml(score_midi, xml)
+    build_score_xml_from_midi(
+        score_midi,
+        xml,
+        score_mode=score_mode,
+        cache_dir=workdir / "score_parts",
+    )
+    write_score_meta(workdir, score_mode)
     log.info("⑤ MusicXML 完成：%s（%.1f KB）", xml.name, xml.stat().st_size / 1024)
 
     cb("abc", 0.90)
@@ -194,6 +203,27 @@ def run_pipeline(
     cb("musicxml", 1.0)
     log.info("流水线结束")
     return xml
+
+
+def write_score_meta(workdir: Path, score_mode: str) -> None:
+    import json
+
+    (Path(workdir) / "score_meta.json").write_text(
+        json.dumps({"score_mode": score_mode}), encoding="utf-8"
+    )
+
+
+def read_score_mode(workdir: Path) -> str | None:
+    """Score mode ``score.musicxml`` was built with (``None`` for legacy jobs)."""
+    import json
+
+    meta = Path(workdir) / "score_meta.json"
+    if not meta.is_file():
+        return None
+    try:
+        return json.loads(meta.read_text(encoding="utf-8")).get("score_mode")
+    except Exception:
+        return None
 
 
 def is_video(filename: str) -> bool:

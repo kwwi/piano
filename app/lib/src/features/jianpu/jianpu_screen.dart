@@ -28,6 +28,7 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
   final _controller = TextEditingController(text: JianpuSamples.twinkle);
   final _parser = const JianpuParser();
   final _builder = const MusicXmlBuilder();
+  final _abcBuilder = const AbcBuilder();
   final _dslWriter = const JianpuDslWriter();
   final _rhythmFitter = const JianpuRhythmFitter();
   final _omr = const JianpuOmr();
@@ -36,10 +37,11 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
 
   JianpuScore? _score;
   String? _musicXml;
+  String? _abc;
   String? _error;
   bool _omrBusy = false;
   bool _previewPlaying = false;
-  /// 0 = 简谱, 1 = 五线谱
+  /// 0 = 简谱, 1 = 五线谱, 2 = ABC, 3 = MusicXML 源码
   int _previewMode = 0;
   StreamSubscription<PlayerState>? _previewSub;
 
@@ -74,12 +76,14 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
     try {
       final score = _parser.parse(_controller.text);
       final xml = _builder.build(score);
+      final abc = _abcBuilder.build(score);
       if (_previewPlaying) {
         _previewPlayer.stop();
       }
       setState(() {
         _score = score;
         _musicXml = xml;
+        _abc = abc;
         _error = null;
         _previewPlaying = false;
       });
@@ -122,6 +126,9 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
     final exportXml = identical(exportScore, score)
         ? xml
         : _builder.build(exportScore);
+    final exportAbc = identical(exportScore, score)
+        ? (_abc ?? _abcBuilder.build(exportScore))
+        : _abcBuilder.build(exportScore);
     final export = const ScoreExport();
     final messenger = ScaffoldMessenger.of(context);
     try {
@@ -129,6 +136,9 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
         case 'musicxml':
           final where = await export.saveMusicXml(exportScore);
           messenger.showSnackBar(SnackBar(content: Text('已导出 MusicXML：$where')));
+        case 'abc':
+          final where = await export.saveAbcText(exportAbc, name: 'jianpu');
+          messenger.showSnackBar(SnackBar(content: Text('已导出 ABC：$where')));
         case 'midi':
           final where = await export.saveMidi(exportScore);
           messenger.showSnackBar(SnackBar(content: Text('已导出 MIDI：$where')));
@@ -246,6 +256,15 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
       if (edited != null && edited.trim().isNotEmpty) {
         // Fit again in case the user left pitch-only tokens while editing.
         _controller.text = _withRecoveredRhythm(edited);
+        // Image → IR → MusicXML / ABC; show staff so user sees the conversion.
+        setState(() => _previewMode = 1);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('已应用识别结果：可预览五线谱，并导出 MusicXML / ABC'),
+            ),
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -287,6 +306,8 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
             playing: _previewPlaying,
             onPreview: _togglePreview,
             onExport: _export,
+            includeAbc: true,
+            trackScoped: false,
           ),
           IconButton(
             icon: _omrBusy
@@ -299,12 +320,12 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
                     ),
                   )
                 : const Icon(Icons.image_search),
-            tooltip: '从图片识别简谱',
+            tooltip: '从图片识别 → 简谱 / MusicXML / ABC',
             onPressed: _omrBusy ? null : _importFromImage,
           ),
           IconButton(
             icon: const Icon(Icons.edit_note),
-            tooltip: '编辑五线谱音符',
+            tooltip: '可视化编辑音符',
             onPressed: _score == null ? null : _editStaffNotes,
           ),
           IconButton(
@@ -365,9 +386,11 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('简谱输入 (DSL)', style: Theme.of(context).textTheme.titleMedium),
+          Text('简谱可视化编写', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
+            "左侧编辑简谱 DSL，右侧预览简谱 / 五线谱 / ABC / MusicXML；"
+            "也可用顶部「可视化编辑音符」或「图片识别」。\n"
             "音符 1-7，0 休止；八度 ' 高 , 低；时值 _ 减半 . 附点；- 延长一拍；| 小节线",
             style: Theme.of(context).textTheme.bodySmall,
           ),
@@ -408,21 +431,95 @@ class _JianpuScreenState extends ConsumerState<JianpuScreen> {
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-          child: SegmentedButton<int>(
-            segments: const [
-              ButtonSegment(value: 0, label: Text('简谱'), icon: Icon(Icons.pin_outlined, size: 18)),
-              ButtonSegment(value: 1, label: Text('五线谱'), icon: Icon(Icons.music_note, size: 18)),
-            ],
-            selected: {_previewMode},
-            onSelectionChanged: (s) => setState(() => _previewMode = s.first),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SegmentedButton<int>(
+              segments: const [
+                ButtonSegment(
+                  value: 0,
+                  label: Text('简谱'),
+                  icon: Icon(Icons.pin_outlined, size: 18),
+                ),
+                ButtonSegment(
+                  value: 1,
+                  label: Text('五线谱'),
+                  icon: Icon(Icons.music_note, size: 18),
+                ),
+                ButtonSegment(
+                  value: 2,
+                  label: Text('ABC'),
+                  icon: Icon(Icons.code, size: 18),
+                ),
+                ButtonSegment(
+                  value: 3,
+                  label: Text('MusicXML'),
+                  icon: Icon(Icons.data_object, size: 18),
+                ),
+              ],
+              selected: {_previewMode},
+              onSelectionChanged: (s) => setState(() => _previewMode = s.first),
+            ),
           ),
         ),
         Expanded(
-          child: _previewMode == 0
-              ? JianpuView(score: score)
-              : (xml == null
-                  ? const Center(child: Text('无法生成五线谱'))
-                  : ScoreView(musicXml: xml)),
+          child: switch (_previewMode) {
+            0 => JianpuView(score: score),
+            1 => xml == null
+                ? const Center(child: Text('无法生成五线谱'))
+                : ScoreView(musicXml: xml),
+            2 => _SourcePane(
+                label: 'ABC（可导出）',
+                text: _abc ?? '',
+              ),
+            _ => _SourcePane(
+                label: 'MusicXML（可导出）',
+                text: xml ?? '',
+              ),
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _SourcePane extends StatelessWidget {
+  final String label;
+  final String text;
+  const _SourcePane({required this.label, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    if (text.trim().isEmpty) {
+      return Center(child: Text('暂无 $label'));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: Theme.of(context).dividerColor),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: SelectableText(
+                  text,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ),
+          ),
         ),
       ],
     );
@@ -441,7 +538,13 @@ class _OmrPreviewDialog extends StatefulWidget {
 class _OmrPreviewDialogState extends State<_OmrPreviewDialog> {
   late final TextEditingController _ctrl;
   final _parser = const JianpuParser();
+  final _xmlBuilder = const MusicXmlBuilder();
+  final _abcBuilder = const AbcBuilder();
   JianpuScore? _previewScore;
+  String? _previewXml;
+  String? _previewAbc;
+  /// 0 = 简谱, 1 = 五线谱, 2 = ABC
+  int _tab = 0;
 
   @override
   void initState() {
@@ -454,10 +557,20 @@ class _OmrPreviewDialogState extends State<_OmrPreviewDialog> {
   void _reparsePreview() {
     try {
       final s = _parser.parse(_ctrl.text);
-      if (mounted) setState(() => _previewScore = s);
+      if (mounted) {
+        setState(() {
+          _previewScore = s;
+          _previewXml = _xmlBuilder.build(s);
+          _previewAbc = _abcBuilder.build(s);
+        });
+      }
     } catch (_) {
       if (mounted && _previewScore != null) {
-        setState(() => _previewScore = null);
+        setState(() {
+          _previewScore = null;
+          _previewXml = null;
+          _previewAbc = null;
+        });
       }
     }
   }
@@ -493,7 +606,8 @@ class _OmrPreviewDialogState extends State<_OmrPreviewDialog> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
-                  '提示：含和弦框/歌词的印刷谱无法 100% 自动对齐，请对照左侧缩略图逐行改数字后再应用。',
+                  '提示：校对简谱后可预览五线谱与 ABC；应用后即可导出 MusicXML / ABC。'
+                  '含和弦框/歌词的印刷谱请对照缩略图手补。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Theme.of(context).colorScheme.tertiary,
                       ),
@@ -511,31 +625,56 @@ class _OmrPreviewDialogState extends State<_OmrPreviewDialog> {
                     ),
                   ),
                 ),
-              if (_previewScore != null)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: SizedBox(
-                    height: 160,
-                    width: double.infinity,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Theme.of(context).dividerColor),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: JianpuView(
-                        score: _previewScore!,
-                        padding: const EdgeInsets.all(8),
-                      ),
+              if (_previewScore != null) ...[
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 0, label: Text('简谱')),
+                    ButtonSegment(value: 1, label: Text('五线谱')),
+                    ButtonSegment(value: 2, label: Text('ABC')),
+                  ],
+                  selected: {_tab},
+                  onSelectionChanged: (s) => setState(() => _tab = s.first),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 180,
+                  width: double.infinity,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border:
+                          Border.all(color: Theme.of(context).dividerColor),
+                      borderRadius: BorderRadius.circular(6),
                     ),
+                    child: switch (_tab) {
+                      0 => JianpuView(
+                          score: _previewScore!,
+                          padding: const EdgeInsets.all(8),
+                        ),
+                      1 => _previewXml == null
+                          ? const Center(child: Text('无法生成五线谱'))
+                          : ScoreView(musicXml: _previewXml!),
+                      _ => SingleChildScrollView(
+                          padding: const EdgeInsets.all(10),
+                          child: SelectableText(
+                            _previewAbc ?? '',
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                    },
                   ),
                 ),
+                const SizedBox(height: 8),
+              ],
               TextField(
                 controller: _ctrl,
-                maxLines: 12,
+                maxLines: 10,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
                 decoration: const InputDecoration(
                   border: OutlineInputBorder(),
-                  labelText: '识别出的简谱 (可编辑)',
+                  labelText: '识别出的简谱 (可编辑 → MusicXML / ABC)',
                 ),
               ),
             ],
@@ -549,7 +688,7 @@ class _OmrPreviewDialogState extends State<_OmrPreviewDialog> {
         ),
         FilledButton(
           onPressed: () => Navigator.pop(context, _ctrl.text),
-          child: const Text('应用到编辑器'),
+          child: const Text('应用并生成谱面'),
         ),
       ],
     );
