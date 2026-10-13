@@ -1,0 +1,12 @@
+# MIDI2ScoreTransformer inference worker — install into its OWN venv (Python 3.11),
+# never into backend/.venv: the music21 fork below conflicts with the API's music21.
+# Evaluation-only deps from upstream (muster, score_transformer, numba, pandas)
+# are intentionally omitted; worker.py does not import utils.py.
+torch>=2.1,<2.6
+transformers>=4.30,<4.46
+pytorch_lightning>=2.0,<2.5
+pretty_midi>=0.2.10
+tokenizers>=0.13.3
+numpy<2
+# TimFelixBeyer/music21@0ed70bb as a tarball (a full git clone of music21 is large and flaky).
+music21 @ https://github.com/TimFelixBeyer/music21/archive/0ed70bb38f2017dc04cb19aada24e88a141517e2.tar.gz
